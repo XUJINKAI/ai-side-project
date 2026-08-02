@@ -1,0 +1,12 @@
+/out/
+/hanoi
+*.o
+*.d
+
+# CMake build artifacts
+/build/
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/CTestTestfile.cmake
+/Testing/
