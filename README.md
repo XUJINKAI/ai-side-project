@@ -6,17 +6,21 @@
 
 ### C 游戏
 
-- npuzzle
+- #### npuzzle
 
 3×3 至 12×12 的滑块拼图游戏，支持键盘、鼠标和可切换操作模式。
 
-- hanoi
+手写版本2012到2022，见 npuzzle\npuzzle-legacy-2012-2022.c
+
+- #### hanoi
 
 3 至 12 个圆盘的汉诺塔游戏，支持数字键与方向键选柱。
 
+纯 AI 仿照 npuzzle 完成。
+
 ### C 库
 
-- cts
+- #### cts
 
 C Type System, 为 C 的结构体定义类型，支持 JSON 序列化/反序列化。
 
