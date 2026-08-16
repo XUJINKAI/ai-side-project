@@ -1,0 +1,57 @@
+:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #172033; background: #f5f7fb; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 800px; margin: auto; padding: 24px; }
+header, .section-title, .actions, li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 1.7rem; }
+h1 small, p, small { font-weight: 400; color: #687386; }
+p { margin: .25rem 0; }
+#status { font-size: .85rem; color: #207447; }
+section { background: #fff; border: 1px solid #e3e8f0; border-radius: 12px; padding: 20px; margin-top: 18px; box-shadow: 0 1px 2px #18223a08; }
+h2 { margin: 0 0 14px; font-size: 1.1rem; }
+button { border: 0; background: #2259c6; color: #fff; border-radius: 6px; padding: 8px 13px; cursor: pointer; font: inherit; }
+button:disabled { cursor: default; opacity: .55; }
+.secondary { background: #e8edf5; color: #29384e; }
+.tabs { display: flex; gap: 4px; margin-top: 18px; border-bottom: 1px solid #cfd7e5; }
+.tab { border-radius: 8px 8px 0 0; background: transparent; color: #526078; padding: 10px 22px; }
+.tab:hover { background: #eaf0fb; }
+.tab[aria-selected="true"] { background: #2259c6; color: #fff; }
+.tab-panel { margin-top: 0; border-top-left-radius: 0; }
+.breadcrumb { display: flex; align-items: center; gap: 3px; min-height: 38px; overflow-x: auto; border: 1px solid #c4cedd; border-radius: 7px; padding: 4px; white-space: nowrap; }
+.breadcrumb button { flex: 0 0 auto; max-width: 240px; overflow: hidden; text-overflow: ellipsis; background: transparent; color: #174ea6; padding: 5px 8px; }
+.breadcrumb button:hover { background: #edf3ff; }
+.breadcrumb button.current { color: #172033; font-weight: 600; }
+.breadcrumb-separator { color: #8290a5; }
+.drop { border: 2px dashed #9aa8bc; border-radius: 9px; padding: 24px; display: flex; flex-direction: column; text-align: center; cursor: pointer; color: #526078; }
+.drop:hover, .drop.drag { border-color: #315fc8; background: #f4f7ff; }
+.drop input { display: none; }
+#uploads { margin-top: 8px; font-size: .9rem; }
+.upload-text { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e3e8f0; }
+ul { padding: 0; margin: 12px 0 0; list-style: none; }
+li { padding: 10px 0; border-top: 1px solid #edf0f5; }
+.name { color: #174ea6; text-decoration: none; overflow-wrap: anywhere; }
+small { display: block; font-size: .8rem; }
+textarea { width: 100%; min-height: 170px; resize: vertical; border: 1px solid #c4cedd; border-radius: 7px; padding: 10px; font: inherit; }
+.actions { justify-content: flex-start; margin-top: 10px; }
+.button { display: inline-block; background: #2259c6; color: #fff; border-radius: 6px; padding: 8px 13px; text-decoration: none; }
+#text-result { color: #526078; font-size: .9rem; }
+dialog { width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 0; border-radius: 12px; padding: 20px; box-shadow: 0 12px 40px #17203340; }
+dialog::backdrop { background: #17203399; }
+.preview-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.preview-header h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#preview-body { max-height: calc(100vh - 180px); overflow: auto; border: 1px solid #e3e8f0; border-radius: 7px; background: #f8fafc; }
+#preview-body img { display: block; max-width: 100%; max-height: calc(100vh - 190px); margin: auto; object-fit: contain; }
+#preview-body pre { margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 14px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.preview-notice { position: sticky; top: 0; margin: 0; padding: 10px 16px; background: #fff4ce; color: #6b4e00; border-bottom: 1px solid #ead58c; }
+.login-page { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login-card { width: min(420px, 100%); padding: 28px; border: 1px solid #e3e8f0; border-radius: 12px; background: #fff; box-shadow: 0 8px 30px #17203314; }
+.login-card form { display: grid; gap: 10px; margin-top: 24px; }
+.login-card input[type="password"] { width: 100%; border: 1px solid #c4cedd; border-radius: 7px; padding: 10px; font: inherit; }
+.login-card .error { color: #b42318; }
+[hidden] { display: none !important; }
+@media (max-width: 500px) {
+  main { padding: 12px; }
+  section { padding: 15px; }
+  header { align-items: flex-start; flex-direction: column; }
+  .tab { flex: 1; }
+}

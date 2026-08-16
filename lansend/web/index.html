@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LanSend 局域箱</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>LanSend <small>局域箱</small></h1><p>局域网文件下载与上传中转站</p></div>
+      <span id="status">连接中…</span>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="文件操作">
+      <button id="download-tab" class="tab" role="tab" aria-selected="true" aria-controls="download-panel">下载</button>
+      <button id="upload-tab" class="tab" role="tab" aria-selected="false" aria-controls="upload-panel" tabindex="-1">上传</button>
+    </div>
+
+    <section id="download-panel" class="tab-panel" role="tabpanel" aria-labelledby="download-tab">
+      <div class="section-title"><h2>下载文件</h2><button id="up" class="secondary">上级目录</button></div>
+      <nav id="path" class="breadcrumb" aria-label="当前目录"></nav>
+      <ul id="files" aria-label="下载文件列表"></ul>
+    </section>
+
+    <section id="upload-panel" class="tab-panel" role="tabpanel" aria-labelledby="upload-tab" hidden>
+      <h2>上传文件</h2>
+      <label class="drop" for="picker"><input id="picker" type="file" multiple><strong>选择文件或拖放到这里</strong><span>文件保存到独立上传目录</span></label>
+      <div id="uploads" aria-live="polite"></div>
+      <div class="upload-text">
+        <h2>上传文本</h2>
+        <textarea id="text" aria-label="上传文本" placeholder="粘贴要上传到服务器的文字"></textarea>
+        <div class="actions"><button id="save-text">上传文本</button><span id="text-result" aria-live="polite"></span></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="preview-dialog" aria-labelledby="preview-title">
+    <div class="preview-header">
+      <h2 id="preview-title">文件预览</h2>
+      <button id="close-preview" class="secondary" aria-label="关闭预览">关闭</button>
+    </div>
+    <div id="preview-body"></div>
+    <div class="actions"><a id="preview-download" class="button" download>下载文件</a></div>
+  </dialog>
+
+  <template id="file-row"><li><div><a class="name"></a><small></small></div></li></template>
+  <script src="/app.js"></script>
+</body>
+</html>
