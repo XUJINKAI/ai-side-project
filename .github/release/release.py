@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 TAG = 'latest-build'
 PROJECTS = {
     'lansend': ['lansend-win-x64.exe', 'lansend-linux-amd64'],
-    'bedtime-guard': ['bedtime-guard-win-x64.exe'],
+    'force-break': ['force-break-win-x64.exe'],
 }
 
 
@@ -185,6 +185,34 @@ def replace_project(gh, release, project, folder):
             raise
 
 
+def remove_retired_projects(gh, release):
+    """Remove build bundles whose project was removed from the repository catalog."""
+    assets = gh.assets(release)
+    protected = {name for project, names in PROJECTS.items() for name in names + [manifest_name(project)]}
+    for name, asset in assets.items():
+        if not name.endswith('-build.json') or name in protected:
+            continue
+        try:
+            info = json.loads(gh.download(asset))
+        except (ValueError, UnicodeError):
+            continue
+        if not isinstance(info, dict):
+            continue
+        project = info.get('project')
+        if (not isinstance(project, str) or project in PROJECTS or
+                name != manifest_name(project) or info.get('repository') != gh.repo or
+                info.get('schema_version') != 1 or not isinstance(info.get('files'), list)):
+            continue
+        filenames = [item.get('name') for item in info['files'] if isinstance(item, dict)]
+        if any(not isinstance(item, str) or not item.startswith(project + '-') or
+               '/' in item or '\\' in item or item in protected for item in filenames):
+            continue
+        for filename in set(filenames):
+            if filename in assets:
+                gh.delete(assets[filename])
+        gh.delete(asset)
+
+
 def publish(project, folder):
     gh = GitHub()
     default = gh.api('')['default_branch']
@@ -216,6 +244,7 @@ def publish(project, folder):
         print(f'Published {project}: {release["html_url"]}')
     else:
         print(f'{project}: identical inputs already published; skip duplicate upload')
+    remove_retired_projects(gh, release)
 
 
 def main():
