@@ -13,7 +13,7 @@ public sealed record BehaviorOptions
 }
 
 // Only elapsed inactivity is reported: no key codes, text or cursor coordinates.
-public sealed record ActivityReport(bool Available, double IdleSeconds);
+public sealed record ActivityReport(bool Available, double IdleSeconds, bool OverlayVisible = false);
 
 public sealed class ActivityLease
 {
@@ -25,7 +25,8 @@ public sealed class ActivityLease
             throw new ArgumentException("Invalid activity report.");
         report = value; received = now;
     }
-    public bool IsActive(TimeSpan now, int idleMinutes) => report is { Available: true } &&
+    public bool IsResting(TimeSpan now) => report is { OverlayVisible: true } && now >= received && now - received <= TimeSpan.FromSeconds(5);
+    public bool IsActive(TimeSpan now, int idleMinutes) => report is { Available: true, OverlayVisible: false } &&
         now >= received && now - received <= TimeSpan.FromSeconds(5) &&
         report.IdleSeconds + (now - received).TotalSeconds < idleMinutes * 60;
 }

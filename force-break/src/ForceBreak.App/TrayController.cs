@@ -16,6 +16,8 @@ internal sealed class TrayController : IDisposable
 {
     private readonly Forms.NotifyIcon tray;
     private readonly SettingsWindow settings;
+    private readonly List<Forms.ToolStripItem> restItems = new();
+    private readonly Forms.ToolStripItem tomorrowItem;
     private readonly DispatcherTimer timer;
     private readonly HwndSource source;
     private readonly List<ReminderWindow> reminders = new();
@@ -46,8 +48,13 @@ internal sealed class TrayController : IDisposable
             Visible = agent,
             ContextMenuStrip = new Forms.ContextMenuStrip()
         };
-        foreach (var minutes in new[] { 5, 10, 30 })
-            tray.ContextMenuStrip.Items.Add($"休息 {minutes} 分钟", null, async (_, _) => await StartRest(minutes));
+        foreach (var minutes in new[] { 5, 10, 30, 60, 120 })
+            restItems.Add(tray.ContextMenuStrip.Items.Add($"休息 {minutes} 分钟", null, async (_, _) => await StartRest(new("rest", RestMinutes: minutes))));
+        tomorrowItem = tray.ContextMenuStrip.Items.Add("直到明天 6:00", null, async (_, _) => await StartRest(new("rest-tomorrow")));
+        restItems.Add(tomorrowItem);
+        tray.ContextMenuStrip.Items.Add(new Forms.ToolStripSeparator());
+        tray.ContextMenuStrip.Items.Add("手动开启遮罩", null, (_, _) => overlay.OpenManual());
+        tray.ContextMenuStrip.Opening += (_, _) => tomorrowItem.Text = $"直到明天 {(status?.Schedule.Release ?? new TimeOnly(6, 0)):H:mm}";
         tray.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) ShowSettings(); };
         timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += async (_, _) => await Tick();
@@ -63,7 +70,8 @@ internal sealed class TrayController : IDisposable
         busy = true;
         try
         {
-            var reply = await Wire.Send(activity is null ? new("status") : new("activity", Activity: activity.Snapshot()));
+            var report = (activity?.Snapshot() ?? new ActivityReport(false, 0)) with { OverlayVisible = overlay.IsVisible };
+            var reply = await Wire.Send(agent ? new("activity", Activity: report) : new("status"));
             if (stopping) return;
             if (!reply.Ok || reply.Status is null) throw new InvalidOperationException(reply.Error ?? "服务返回无效状态。");
             status = reply.Status;
@@ -71,7 +79,8 @@ internal sealed class TrayController : IDisposable
             settings.UpdateStatus(status);
             tray.Text = Tooltip(status);
             var manualAllowed = status.Phase != Phase.Restricted && status.Break?.Phase is not (Phase.Committed or Phase.Reminder or Phase.Restricted);
-            foreach (Forms.ToolStripItem item in tray.ContextMenuStrip!.Items) item.Enabled = manualAllowed;
+            foreach (var item in restItems) item.Enabled = manualAllowed;
+            tomorrowItem.Text = $"直到明天 {status.Schedule.Release:H:mm}";
             if (agent && status.Schedule.Behavior.DetectActivity && activity is null) activity = new();
             if (!status.Schedule.Behavior.DetectActivity && activity is not null) { activity.Dispose(); activity = null; }
             if (agent) RenderAndEnforce();
@@ -85,7 +94,7 @@ internal sealed class TrayController : IDisposable
             if (lastSuccess == 0 || Stopwatch.GetElapsedTime(lastSuccess) > TimeSpan.FromSeconds(5))
             {
                 status = null;
-                CloseReminders(); overlay.Dispose();
+                CloseReminders(); overlay.Release();
             }
         }
         finally { busy = false; }
@@ -100,11 +109,11 @@ internal sealed class TrayController : IDisposable
         return double.IsFinite(seconds) ? $"Force Break · 距休息约 {Math.Ceiling(seconds / 60)} 分钟{(value.WorkTimerPaused ? "（工作计时暂停）" : "")}" : "Force Break · 计划未启用";
     }
 
-    private async Task StartRest(int minutes)
+    private async Task StartRest(Request request)
     {
         try
         {
-            var reply = await Wire.Send(new("rest", RestMinutes: minutes));
+            var reply = await Wire.Send(request);
             if (!reply.Ok || reply.Status is null) throw new InvalidOperationException(reply.Error);
             status = reply.Status; lastSuccess = Stopwatch.GetTimestamp();
             settings.UpdateStatus(status); RenderAndEnforce();
@@ -135,10 +144,10 @@ internal sealed class TrayController : IDisposable
         if (status.Phase == Phase.Restricted && status.ReleaseAt is { } release && release > now)
         {
             if (behavior.FullscreenOverlay) overlay.ShowUntil(release, status.IsBreak ? "离开屏幕，休息一下。" : "晚安，明天再继续。");
-            else overlay.Dispose();
+            else overlay.Release();
             if (behavior.LockScreen) workstation.Enforce();
         }
-        else overlay.Dispose();
+        else overlay.Release();
     }
 
     private IntPtr SessionMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)

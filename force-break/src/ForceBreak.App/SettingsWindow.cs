@@ -62,7 +62,7 @@ internal sealed class SettingsWindow : Window
         }
         panel.Children.Add(management);
         panel.Children.Add(stateText); panel.Children.Add(detail);
-        panel.Children.Add(new TextBlock { Text = "关闭面板后继续在托盘运行。左键单击托盘回到本页；悬停查看距离休息的时间；右键可立即休息 5、10 或 30 分钟。\n\n第一次安装后请启用需要的计划。进入承诺期后，本轮时间和限制行为固定；修改只影响后续安排，当前安排结束前不能卸载。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
+        panel.Children.Add(new TextBlock { Text = "关闭面板后继续在托盘运行。左键单击托盘回到本页；悬停查看距离休息的时间；右键可选择 5—120 分钟休息、直到明天或手动笔记遮罩。\n\n第一次安装后请启用需要的计划。进入承诺期后，本轮时间和限制行为固定；修改只影响后续安排，当前安排结束前不能卸载。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
         panel = Page("早睡计划");
         panel.Children.Add(enabled);
         AddRow(panel, "承诺时间中心", commitment); AddRow(panel, "前后随机（分钟）", jitter);
@@ -94,7 +94,7 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(fullscreen); panel.Children.Add(lockScreen);
         panel.Children.Add(new TextBlock
         {
-            Text = "遮罩覆盖全部屏幕，仅显示剩余整数分钟。锁屏是独立选项，不勾选便不会主动锁定 Windows。\n限制行为在承诺时固定。任务管理器由服务应用系统策略，策略不关闭已打开的实例。",
+            Text = "遮罩覆盖全部屏幕，以分钟显示倒计时，并提供自动保存的笔记。休息到期后点击关闭按钮退出。锁屏是独立选项，不勾选便不会主动锁定 Windows。\n限制行为在承诺时固定。任务管理器由服务应用系统策略，策略不关闭已打开的实例。",
             TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 6, 0, 18)
         });
         save.Click += async (_, _) => await Save();

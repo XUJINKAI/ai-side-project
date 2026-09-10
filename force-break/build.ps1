@@ -9,6 +9,8 @@ try {
     if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
         dotnet run --project tests/ForceBreak.Windows.Tests -c Release
         if ($LASTEXITCODE -ne 0) { throw 'Windows policy tests failed.' }
+        dotnet run --project tests/ForceBreak.App.Tests -c Release
+        if ($LASTEXITCODE -ne 0) { throw 'Overlay UI tests failed.' }
     }
     $output = Join-Path $PSScriptRoot "out/ForceBreak-$Runtime"
     if (Test-Path $output) { Remove-Item $output -Recurse -Force }

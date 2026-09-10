@@ -51,7 +51,7 @@ internal static class ForceBreakTests
         }),
         ("manual rest persists, works when disabled, and resets work", () =>
         {
-            foreach (var minutes in new[] { 5, 10, 30 })
+            foreach (var minutes in new[] { 1, 5, 10, 30, 60, 120 })
             {
                 var state = new PlannerState(); state.Break.WorkSeconds = 200;
                 BreakPlanner.StartManual(state.Break, Now, minutes, state.Schedule, Phase.Disabled);
@@ -66,7 +66,7 @@ internal static class ForceBreakTests
         ("manual rest cannot replace commitments or night restrictions", () =>
         {
             var s = new Schedule(); var b = new BreakState();
-            Throws(() => BreakPlanner.StartManual(b, Now, 3, s, Phase.Open));
+            Throws(() => BreakPlanner.StartManual(b, Now, 0, s, Phase.Open));
             Throws(() => BreakPlanner.StartManual(b, Now, 5, s, Phase.Restricted));
             BreakPlanner.Tick(b, new() { Enabled = true }, Now, TimeSpan.FromMinutes(40), false, true, s.Behavior);
             var before = b.Frozen;

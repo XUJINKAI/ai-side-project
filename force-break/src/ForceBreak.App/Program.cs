@@ -31,6 +31,7 @@ internal static class Program
             };
             return emergencyApp.Run();
         }
+        if (args.Length > 0 && args[0] is "-h" or "-break" or "-break-tomorrow") return CommandLine.Run(args);
         if (args.Length != 0 && !(args.Length == 1 && args[0] is "--background" or "--uninstall-ui"))
         { MessageBox.Show("不支持此参数。紧急管理命令请查阅 README。", "Force Break"); return 2; }
         var background = args.Contains("--background");

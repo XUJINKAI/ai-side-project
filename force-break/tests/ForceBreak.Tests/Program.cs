@@ -125,7 +125,7 @@ var tests = new (string Name, Action Run)[]
     })
 };
 
-tests = tests.Concat(BreakTests.Cases).Concat(ForceBreakTests.Cases).ToArray();
+tests = tests.Concat(BreakTests.Cases).Concat(ForceBreakTests.Cases).Concat(OverlayAndCommandTests.Cases).ToArray();
 var failed = 0;
 foreach (var test in tests)
 {

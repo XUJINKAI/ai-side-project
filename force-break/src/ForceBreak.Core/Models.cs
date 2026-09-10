@@ -57,5 +57,5 @@ public sealed record Status(Schedule Schedule, Phase Phase, DateTimeOffset? Remi
     bool IsBreak = false, DateTimeOffset? PolicyUntil = null, BehaviorOptions? EffectiveBehavior = null,
     bool WorkTimerPaused = false, string? ActivityMessage = null);
 
-public sealed record Request(string Command, Schedule? Schedule = null, int? RestMinutes = null, ActivityReport? Activity = null);
+public sealed record Request(string Command, Schedule? Schedule = null, int? RestMinutes = null, ActivityReport? Activity = null, int? TomorrowHour = null);
 public sealed record Response(bool Ok, Status? Status = null, string? Error = null);

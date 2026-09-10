@@ -18,6 +18,9 @@ Process? ui = null;
 try
 {
     Check(File.Exists(executable), "published executable exists");
+    var help = await Cli(executable, "-h");
+    Check(help.Code == 0 && help.Text.Contains("-break-tomorrow"), "CLI help writes to redirected output");
+    Check((await Cli(executable, "-break", "121")).Code == 2, "CLI rejects durations outside 1 through 120");
     Check(Directory.GetFiles(Path.GetDirectoryName(executable)!).Length == 1, "distribution contains exactly one EXE");
     ui = Process.Start(new ProcessStartInfo(executable) { UseShellExecute = false })!;
     var deadline = DateTime.UtcNow.AddSeconds(15);
@@ -97,9 +100,10 @@ try
         Behavior = new BehaviorOptions { DetectActivity = true, FullscreenOverlay = false, LockScreen = false } };
     reply = await Wire.Send(new Request("save", safeSchedule));
     Check(reply.Ok, "behavior options accepted over IPC");
-    reply = await Wire.Send(new Request("rest", RestMinutes: 3));
+    reply = await Wire.Send(new Request("rest", RestMinutes: 121));
     Check(!reply.Ok, "invalid manual duration rejected by service");
-    reply = await Wire.Send(new Request("rest", RestMinutes: 10));
+    Check((await Cli(executable, "-break", "30")).Code == 0, "CLI starts a 30 minute rest through the service");
+    reply = await Wire.Send(new Request("status"));
     Check(reply.Ok && reply.Status?.Phase == Phase.Restricted && reply.Status.IsBreak &&
         reply.Status.EffectiveBehavior?.LockScreen == false, "manual rest works with periodic schedule disabled and snapshots behavior");
     var manualRelease = reply.Status!.ReleaseAt;
@@ -111,6 +115,15 @@ try
     NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall);
     installed = false;
     Check(!NativeInstaller.IsInstalled(), "emergency uninstall removes active manual rest");
+    NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable);
+    installed = true;
+    reply = await Wire.Send(new Request("save", safeSchedule));
+    Check(reply.Ok, "safe behavior configured for overnight CLI test");
+    Check((await Cli(executable, "-break-tomorrow", "6")).Code == 0, "CLI starts an overnight rest");
+    reply = await Wire.Send(new Request("status"));
+    Check(reply.Ok && reply.Status?.ReleaseAt == BreakPlanner.TomorrowRelease(safeSchedule, DateTimeOffset.UtcNow, 6), "overnight CLI uses tomorrow in the configured timezone");
+    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall);
+    installed = false;
     Console.WriteLine("PASS single EXE GUI launch, native install, IPC, recovery, resume and uninstall");
     return 0;
 }
@@ -123,3 +136,16 @@ finally
 
 static void Check(bool condition, string name)
 { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); }
+
+static async Task<(int Code, string Text)> Cli(string executable, params string[] args)
+{
+    var info = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+    foreach (var arg in args) info.ArgumentList.Add(arg);
+    using var child = Process.Start(info)!;
+    var stdout = child.StandardOutput.ReadToEndAsync();
+    var stderr = child.StandardError.ReadToEndAsync();
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+    try { await child.WaitForExitAsync(timeout.Token); }
+    catch { if (!child.HasExited) child.Kill(true); throw; }
+    return (child.ExitCode, await stdout + await stderr);
+}

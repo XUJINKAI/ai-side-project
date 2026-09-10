@@ -92,7 +92,7 @@ public sealed class GuardService : ServiceBase
         } while (await timer.WaitForNextTickAsync(token));
     }
 
-    private void Refresh(Schedule? replacement = null, int? manualMinutes = null)
+    private void Refresh(Schedule? replacement = null, int? manualMinutes = null, bool tomorrow = false, int? tomorrowHour = null)
     {
         var candidate = JsonStorage.Clone(state);
         var planner = new Planner(candidate, () => RandomNumberGenerator.GetInt32(1_000_000));
@@ -106,10 +106,13 @@ public sealed class GuardService : ServiceBase
         if (candidate.Schedule.Breaks.Enabled && candidate.Break.Frozen is null)
             try { unlocked = sessions.IsTargetUnlocked(); } catch (Exception e) { ReportError(e.Message); }
         var active = !candidate.Schedule.Behavior.DetectActivity;
-        if (!active && unlocked)
+        if (unlocked)
             foreach (var pair in activities)
-                if (pair.Value.IsActive(MonotonicNow, candidate.Schedule.Behavior.IdleMinutes) && sessions.IsTargetUnlocked(pair.Key))
-                { active = true; break; }
+            {
+                if (!sessions.IsTargetUnlocked(pair.Key)) continue;
+                if (pair.Value.IsResting(MonotonicNow)) { active = false; break; }
+                if (candidate.Schedule.Behavior.DetectActivity && pair.Value.IsActive(MonotonicNow, candidate.Schedule.Behavior.IdleMinutes)) active = true;
+            }
         var night = planner.Tick(now);
         var rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now,
             unlocked && active ? elapsed : TimeSpan.Zero, night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior);
@@ -119,9 +122,10 @@ public sealed class GuardService : ServiceBase
             rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now, TimeSpan.Zero,
                 night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior);
         }
-        if (manualMinutes is { } minutes)
+        if (manualMinutes is not null || tomorrow)
         {
-            BreakPlanner.StartManual(candidate.Break, now, minutes, candidate.Schedule, night.Phase);
+            if (tomorrow) BreakPlanner.StartTomorrow(candidate.Break, now, candidate.Schedule, night.Phase, tomorrowHour);
+            else BreakPlanner.StartManual(candidate.Break, now, manualMinutes!.Value, candidate.Schedule, night.Phase);
             rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now, TimeSpan.Zero,
                 false, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior);
         }
@@ -129,7 +133,7 @@ public sealed class GuardService : ServiceBase
         var next = BreakPlanner.Combine(night, rest) with
         {
             WorkTimerPaused = paused,
-            ActivityMessage = paused ? "工作计时已暂停：空闲、会话锁定或输入检测尚未就绪。" :
+            ActivityMessage = paused ? "工作计时已暂停：遮罩显示中、空闲、会话锁定或输入检测尚未就绪。" :
                 candidate.Schedule.Behavior.DetectActivity ? "输入检测已开启；承诺前仅在近期有键鼠操作时累计。" : "输入检测未开启；承诺前按解锁时间累计。"
         };
         var json = JsonSerializer.Serialize(candidate, JsonStorage.Options);
@@ -206,6 +210,8 @@ public sealed class GuardService : ServiceBase
                                     if (!activities.TryGetValue((int)sessionId, out var lease)) activities[(int)sessionId] = lease = new();
                                     lease.Update(request.Activity, MonotonicNow);
                                     Refresh(); response = new(true, status); break;
+                                case "rest-tomorrow":
+                                    Refresh(tomorrow: true, tomorrowHour: request.TomorrowHour); response = new(true, status); break;
                                 case "rest" when request.RestMinutes is { } minutes:
                                     Refresh(manualMinutes: minutes); response = new(true, status); break;
                                 case "status": Refresh(); response = new(true, status); break;
