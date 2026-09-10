@@ -24,7 +24,7 @@ internal static class ScheduledRecovery
                     dynamic existing = folder.GetTask(NativeInstaller.RecoveryTask);
                     Marshal.FinalReleaseComObject(existing);
                 }
-                catch (COMException e) when ((uint)e.HResult == 0x80070002) { return; }
+                catch (Exception e) when ((uint)e.HResult == 0x80070002) { return; }
                 throw new InvalidOperationException("恢复任务已经存在，未覆盖。");
             }
             finally { Marshal.FinalReleaseComObject(folder); }
@@ -76,10 +76,10 @@ internal static class ScheduledRecovery
             {
                 dynamic task;
                 try { task = folder.GetTask(NativeInstaller.RecoveryTask); }
-                catch (COMException e) when ((uint)e.HResult == 0x80070002) { return; }
+                catch (Exception e) when ((uint)e.HResult == 0x80070002) { return; }
                 try
                 {
-                    try { task.Stop(0); } catch (COMException e) when ((uint)e.HResult == 0x8004130B) { }
+                    try { task.Stop(0); } catch (Exception e) when ((uint)e.HResult == 0x8004130B) { }
                 }
                 finally { Marshal.FinalReleaseComObject(task); }
                 folder.DeleteTask(NativeInstaller.RecoveryTask, 0);
