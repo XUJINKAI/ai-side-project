@@ -37,6 +37,7 @@ public sealed class TaskManagerPolicy
             }
             else
             {
+                VerifyValue(sid);
                 if (now - existing.HeartbeatAt >= TimeSpan.FromSeconds(30))
                     JsonStorage.Write(journal, existing with { HeartbeatAt = now });
                 return;
@@ -59,7 +60,15 @@ public sealed class TaskManagerPolicy
         JsonStorage.Write(journal, new PolicyLease(sid, existed, original, expires, now));
         key.SetValue(ValueName, 1, RegistryValueKind.DWord);
         key.Flush();
+        VerifyValue(sid);
         log("Task Manager policy enabled for the selected user.");
+    }
+
+    private void VerifyValue(string sid)
+    {
+        using var key = Registry.Users.OpenSubKey(sid + "\\" + subkey);
+        if (key?.GetValue(ValueName) is not int value || value != 1 || key.GetValueKind(ValueName) != RegistryValueKind.DWord)
+            throw new InvalidOperationException("任务管理器策略值缺失或被其他设置改变，未确认限制生效；未覆盖外部修改。");
     }
 
     public void Restore(bool onlyExpired = false)

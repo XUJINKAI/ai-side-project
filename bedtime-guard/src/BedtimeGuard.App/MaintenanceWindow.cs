@@ -95,7 +95,12 @@ internal sealed class MaintenanceWindow : Window
         {
             try
             {
-                await Task.Run(() => NativeInstaller.Execute(action, sid, directory, Environment.ProcessPath!, emergencyConfirmation));
+                var overwrite = action == MaintenanceAction.Install && NativeInstaller.HasExistingInstallation(directory);
+                if (overwrite && MessageBox.Show(this,
+                    "发现已有安装或数据，是否覆盖安装？\n\n将更新程序并修复安装登记；保留计划、累计进度、已承诺安排与原受约束账号。已暂停的安装仍保持暂停。",
+                    "确认覆盖安装", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+                { result.Text = "已取消覆盖，现有安装和数据未修改。"; code = 0; return; }
+                await Task.Run(() => NativeInstaller.Execute(action, sid, directory, Environment.ProcessPath!, emergencyConfirmation, overwrite));
                 result.Text = action == MaintenanceAction.Install ? "安装完成。请关闭此窗口，返回主界面配置并启用计划。" : MaintenanceLauncher.Label(action) + "已完成。";
                 code = 0;
             }

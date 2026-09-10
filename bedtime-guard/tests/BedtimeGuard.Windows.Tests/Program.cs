@@ -30,6 +30,9 @@ try
 
     policy.Apply(sid, now.AddHours(1), now);
     key.SetValue("DisableTaskMgr", 2, RegistryValueKind.DWord);
+    var changedDetected = false;
+    try { policy.Apply(sid, now.AddHours(1), now); } catch (InvalidOperationException) { changedDetected = true; }
+    Check(changedDetected && key.GetValue("DisableTaskMgr") is 2, "changed policy is reported instead of falsely claiming success");
     policy.Restore();
     Check(key.GetValue("DisableTaskMgr") is 2 && !File.Exists(journal), "external change not overwritten");
     key.DeleteValue("DisableTaskMgr");

@@ -36,7 +36,7 @@ public static class NativeInstaller
             string.Equals(Path.Combine(directory, "BedtimeGuard.exe"), executable, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static void Execute(MaintenanceAction action, string userSid, string installDirectory, string sourceExe, string? emergencyConfirmation = null)
+    public static void Execute(MaintenanceAction action, string userSid, string installDirectory, string sourceExe, string? emergencyConfirmation = null, bool overwrite = false)
     {
         Paths.RequireAdministrator();
         // One machine-wide installation transaction; users cannot mutate this admin-owned mutex.
@@ -48,7 +48,7 @@ public static class NativeInstaller
         {
             switch (action)
             {
-                case MaintenanceAction.Install: Install(userSid, installDirectory, sourceExe); break;
+                case MaintenanceAction.Install: Install(userSid, installDirectory, sourceExe, overwrite); break;
                 case MaintenanceAction.Repair:
                     if (emergencyConfirmation != EmergencyPause) throw new InvalidOperationException("紧急暂停需要完整的管理员确认参数，见 README。");
                     Repair(); break;
@@ -60,7 +60,7 @@ public static class NativeInstaller
         finally { transaction.ReleaseMutex(); }
     }
 
-    private static void Install(string sid, string directory, string source)
+    private static void Install(string sid, string directory, string source, bool overwrite)
     {
         var identity = new SecurityIdentifier(sid);
         _ = identity.Translate(typeof(NTAccount));
@@ -68,10 +68,12 @@ public static class NativeInstaller
         RejectReparseAncestors(Paths.Data);
         if (!File.Exists(source) || !string.Equals(Path.GetExtension(source), ".exe", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("请使用发布的单文件 EXE 安装。");
-        if (IsInstalled() || Directory.Exists(directory) || Directory.Exists(Paths.Data) || Directory.Exists(Shortcuts))
-            throw new InvalidOperationException("发现已有安装或数据。请先使用恢复或卸载功能；不会覆盖现有文件。");
-        using (var key = Registry.LocalMachine.OpenSubKey(UninstallKey))
-            if (key is not null) throw new InvalidOperationException("已有卸载登记，未覆盖。");
+        if (HasExistingInstallation(directory))
+        {
+            if (!overwrite) throw new InvalidOperationException("发现已有安装或数据，需要确认覆盖安装。");
+            Overwrite(sid, directory, source);
+            return;
+        }
         ScheduledRecovery.EnsureAbsent();
         bool serviceCreated = false, taskCreated = false, shortcutCreated = false, registrationCreated = false;
         try
@@ -95,7 +97,7 @@ public static class NativeInstaller
             {
                 registrationCreated = true;
                 registration.SetValue("DisplayName", "Bedtime Guard");
-                registration.SetValue("DisplayVersion", "0.2.0");
+                registration.SetValue("DisplayVersion", "0.3.0");
                 registration.SetValue("InstallLocation", directory);
                 registration.SetValue("DisplayIcon", executable);
                 registration.SetValue("UninstallString", $"\"{executable}\" --uninstall-ui");
@@ -114,6 +116,73 @@ public static class NativeInstaller
             if (registrationCreated) Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false);
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
             if (Directory.Exists(Paths.Data)) Directory.Delete(Paths.Data, true);
+            throw;
+        }
+    }
+
+    public static bool HasExistingInstallation(string directory)
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(UninstallKey);
+        return IsInstalled() || Directory.Exists(directory) || Directory.Exists(Paths.Data) ||
+            Directory.Exists(Shortcuts) || key is not null;
+    }
+
+    private static void Overwrite(string sid, string directory, string source)
+    {
+        var executable = Path.Combine(directory, "BedtimeGuard.exe");
+        if (File.Exists(Paths.Install))
+        {
+            var old = JsonStorage.Read<Installation>(Paths.Install);
+            if (!string.Equals(old.AppPath, executable, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"已有安装位于 {Path.GetDirectoryName(old.AppPath)}，请将安装位置改为该目录后覆盖。");
+            sid = old.UserSid; // Never change the constrained account during an upgrade.
+        }
+        RejectReparseAncestors(executable);
+        RejectReparseAncestors(Paths.State);
+        RejectReparseAncestors(Paths.Install);
+        RejectReparseAncestors(Shortcuts);
+        // Validate before stopping a working installation. Existing valid state is never reset.
+        if (File.Exists(Paths.State)) JsonStorage.Read<PlannerState>(Paths.State).Schedule.Validate();
+        else if (IsInstalled() || File.Exists(Paths.Lease))
+            throw new InvalidOperationException("现有状态文件缺失，不能自动清空承诺。请先通过紧急管理命令处理。");
+        var paused = File.Exists(Paths.Paused);
+        Stop();
+        try
+        {
+            CreateProtectedDirectory(Paths.Data, false);
+            File.WriteAllText(Paths.Paused, DateTimeOffset.UtcNow.ToString("O"));
+            new TaskManagerPolicy().Restore();
+            var state = File.Exists(Paths.State) ? JsonStorage.Read<PlannerState>(Paths.State) : new PlannerState();
+            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
+            state.Schedule.Validate();
+            // Keep the original JSON as an administrator-only recovery copy.
+            if (File.Exists(Paths.State)) File.Copy(Paths.State, Path.Combine(Paths.Data, "state.before-install.json"), true);
+            CreateProtectedDirectory(directory, true);
+            ScheduledRecovery.Remove();
+            StopUserProcesses(executable);
+            File.Copy(source, executable, true);
+            JsonStorage.Write(Paths.State, state);
+            JsonStorage.Write(Paths.Install, new Installation(sid, executable));
+            DeleteService();
+            CreateService(executable);
+            ServiceRecovery.Configure();
+            ScheduledRecovery.Register(executable);
+            Directory.CreateDirectory(Shortcuts);
+            File.Delete(Path.Combine(Shortcuts, "Bedtime Guard - Recovery.lnk"));
+            CreateShortcut("Bedtime Guard.lnk", executable, "");
+            using var registration = Registry.LocalMachine.CreateSubKey(UninstallKey, true);
+            registration.SetValue("DisplayName", "Bedtime Guard");
+            registration.SetValue("DisplayVersion", "0.3.0");
+            registration.SetValue("InstallLocation", directory);
+            registration.SetValue("DisplayIcon", executable);
+            registration.SetValue("UninstallString", $"\"{executable}\" --uninstall-ui");
+            registration.SetValue("NoModify", 1, RegistryValueKind.DWord);
+            if (!paused) { File.Delete(Paths.Paused); Start(); }
+        }
+        catch
+        {
+            // Retain data and recovery records for a retry; never roll back by deleting user state.
+            File.WriteAllText(Paths.Paused, DateTimeOffset.UtcNow.ToString("O"));
             throw;
         }
     }
@@ -252,7 +321,9 @@ public static class NativeInstaller
                 InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         if (userRead) security.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
             FileSystemRights.ReadAndExecute, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-        new DirectoryInfo(path).Create(security);
+        var directory = new DirectoryInfo(path);
+        directory.Create(security);
+        directory.SetAccessControl(security);
     }
 
     private static void CreateShortcut(string name, string executable, string arguments)

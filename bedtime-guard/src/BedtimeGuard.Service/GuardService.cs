@@ -128,7 +128,7 @@ public sealed class GuardService : ServiceBase
             if (next.TaskManagerRequested && next.PolicyUntil is { } release)
                 policy.Apply(installation.UserSid, release, now);
             else policy.Restore();
-            status = status with { PolicyMessage = next.TaskManagerRequested ? "任务管理器限制已生效" : "任务管理器不受本工具限制" };
+            status = status with { PolicyMessage = next.TaskManagerRequested ? "任务管理器策略值已核验；不关闭已打开的实例" : "任务管理器不受本工具限制" };
             lastError = null;
         }
         catch (Exception error)

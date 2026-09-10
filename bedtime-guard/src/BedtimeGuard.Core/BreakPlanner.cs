@@ -3,17 +3,20 @@ namespace BedtimeGuard.Core;
 public sealed record BreakOptions
 {
     public bool Enabled { get; init; }
-    public double WorkHours { get; init; } = 1;
+    public double WorkMinutes { get; init; } = 60;
+    // Read pre-0.3 configuration; new writes only contain WorkMinutes.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public double? WorkHours { get => null; init { if (value is { } hours) WorkMinutes = hours * 60; } }
     public int RestMinutes { get; init; } = 10;
     public int ReminderMinutes { get; init; } = 10;
     public int CommitmentMinutes { get; init; } = 10;
 
     public void Validate()
     {
-        if (!double.IsFinite(WorkHours) || WorkHours < 0.1 || WorkHours > 24)
-            throw new ArgumentException("休息间隔必须为 0.1—24 小时，可使用小数。");
+        if (!double.IsFinite(WorkMinutes) || WorkMinutes < 1 || WorkMinutes > 1440)
+            throw new ArgumentException("休息间隔必须为 1—1440 分钟，可使用小数。");
         if (RestMinutes is < 1 or > 180) throw new ArgumentException("休息时长必须为 1—180 分钟。");
-        if (ReminderMinutes < 0 || CommitmentMinutes < ReminderMinutes || CommitmentMinutes >= WorkHours * 60)
+        if (ReminderMinutes < 0 || CommitmentMinutes < ReminderMinutes || CommitmentMinutes >= WorkMinutes)
             throw new ArgumentException("承诺提前量必须不少于提醒提前量，且两者均需小于工作间隔。提前量可以为 0。");
     }
 }
@@ -42,7 +45,7 @@ public static class BreakPlanner
         {
             state.WorkSeconds = 0;
             state.Frozen = null;
-            return new(Phase.Disabled, options.WorkHours * 3600, SuppressedByNight: true);
+            return new(Phase.Disabled, options.WorkMinutes * 60, SuppressedByNight: true);
         }
         if (state.Frozen is { } existing)
         {
@@ -58,11 +61,11 @@ public static class BreakPlanner
         if (!options.Enabled)
         {
             state.WorkSeconds = 0;
-            return new(Phase.Disabled, options.WorkHours * 3600);
+            return new(Phase.Disabled, options.WorkMinutes * 60);
         }
-        state.WorkSeconds = Math.Min(options.WorkHours * 3600,
+        state.WorkSeconds = Math.Min(options.WorkMinutes * 60,
             state.WorkSeconds + Math.Max(0, unlockedElapsed.TotalSeconds));
-        var remaining = options.WorkHours * 3600 - state.WorkSeconds;
+        var remaining = options.WorkMinutes * 60 - state.WorkSeconds;
         if (remaining <= options.CommitmentMinutes * 60)
         {
             var start = now.AddSeconds(remaining);

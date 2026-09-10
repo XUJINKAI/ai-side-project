@@ -20,7 +20,7 @@ internal sealed class SettingsWindow : Window
     private readonly CheckBox enabled = new() { Content = "启用每周睡眠计划", Margin = new Thickness(0, 10, 0, 10) };
     private readonly CheckBox taskManager = new() { Content = "承诺期开始后临时禁用任务管理器（可选）", Margin = new Thickness(0, 12, 0, 6) };
     private readonly CheckBox breaksEnabled = new() { Content = "启用定时强制休息", Margin = new Thickness(0, 18, 0, 10) };
-    private readonly TextBox workHours = new(), restMinutes = new(), breakReminder = new(), breakCommitment = new();
+    private readonly TextBox workMinutes = new(), restMinutes = new(), breakReminder = new(), breakCommitment = new();
     private readonly TextBox commitment = new(), jitter = new(), reminder = new(), bedtime = new(), release = new();
     private readonly ComboBox zones = new() { MinWidth = 240, DisplayMemberPath = "DisplayName" };
     private readonly Dictionary<DayOfWeek, CheckBox> days = new();
@@ -70,7 +70,7 @@ internal sealed class SettingsWindow : Window
         foreach (var zone in TimeZoneInfo.GetSystemTimeZones()) zones.Items.Add(zone);
         AddRow(panel, "计划时区", zones);
         panel.Children.Add(breaksEnabled);
-        AddRow(panel, "工作间隔（小时）", workHours);
+        AddRow(panel, "工作间隔（分钟）", workMinutes);
         AddRow(panel, "休息时长（分钟）", restMinutes);
         AddRow(panel, "提前提醒（分钟）", breakReminder);
         AddRow(panel, "提前承诺（分钟）", breakCommitment);
@@ -78,7 +78,7 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(taskManager);
         panel.Children.Add(new TextBlock
         {
-            Text = "随机承诺时间整晚固定，不提前公布。进入承诺期后，修改仅影响后续夜晚；今晚不能取消或延期。\n任务管理器限制只适用于个人未受管理的电脑，不阻止管理员恢复。",
+            Text = "随机承诺时间整晚固定，不提前公布。进入承诺期后，修改仅影响后续夜晚；今晚不能取消或延期。\n任务管理器选项必须在承诺前开启；已承诺安排不受后续勾选影响。策略不关闭已打开的任务管理器。",
             TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 6, 0, 18)
         });
         save.Click += async (_, _) => await Save();
@@ -126,7 +126,7 @@ internal sealed class SettingsWindow : Window
         reminder.Text = s.Reminder.ToString("HH:mm"); bedtime.Text = s.Bedtime.ToString("HH:mm"); release.Text = s.Release.ToString("HH:mm");
         taskManager.IsChecked = s.DisableTaskManager;
         breaksEnabled.IsChecked = s.Breaks.Enabled;
-        workHours.Text = s.Breaks.WorkHours.ToString(CultureInfo.InvariantCulture);
+        workMinutes.Text = s.Breaks.WorkMinutes.ToString(CultureInfo.InvariantCulture);
         restMinutes.Text = s.Breaks.RestMinutes.ToString(CultureInfo.InvariantCulture);
         breakReminder.Text = s.Breaks.ReminderMinutes.ToString(CultureInfo.InvariantCulture);
         breakCommitment.Text = s.Breaks.CommitmentMinutes.ToString(CultureInfo.InvariantCulture);
@@ -152,7 +152,7 @@ internal sealed class SettingsWindow : Window
                 Breaks = new BreakOptions
                 {
                     Enabled = breaksEnabled.IsChecked == true,
-                    WorkHours = double.Parse(workHours.Text, CultureInfo.InvariantCulture),
+                    WorkMinutes = double.Parse(workMinutes.Text, CultureInfo.InvariantCulture),
                     RestMinutes = int.Parse(restMinutes.Text, CultureInfo.InvariantCulture),
                     ReminderMinutes = int.Parse(breakReminder.Text, CultureInfo.InvariantCulture),
                     CommitmentMinutes = int.Parse(breakCommitment.Text, CultureInfo.InvariantCulture)

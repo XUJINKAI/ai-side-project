@@ -6,6 +6,15 @@ internal static class BreakTests
     private static readonly BreakOptions Options = new() { Enabled = true };
     public static (string Name, Action Run)[] Cases =>
     [
+        ("legacy hours migrate to minutes without changing the interval", () =>
+        {
+            var legacy = System.Text.Json.JsonSerializer.Deserialize<BreakOptions>("{\"WorkHours\":1.5}")!;
+            Equal(90d, legacy.WorkMinutes);
+            var json = System.Text.Json.JsonSerializer.Serialize(legacy);
+            Equal(false, json.Contains("WorkHours"));
+            Equal(true, json.Contains("WorkMinutes"));
+            (Options with { WorkMinutes = 1, ReminderMinutes = 0, CommitmentMinutes = 0 }).Validate();
+        }),
         ("break defaults: 50 minute reminder, 60 minute lock, 70 minute release", () =>
         {
             var state = new BreakState();
@@ -28,7 +37,7 @@ internal static class BreakTests
         ("break freeze survives disable and all timing/policy edits", () =>
         {
             var state = new BreakState(); Tick(state, 50, 50); var frozen = state.Frozen;
-            var edited = Options with { Enabled = false, WorkHours = 2, RestMinutes = 1, ReminderMinutes = 0, CommitmentMinutes = 0 };
+            var edited = Options with { Enabled = false, WorkMinutes = 120, RestMinutes = 1, ReminderMinutes = 0, CommitmentMinutes = 0 };
             Equal(Phase.Reminder, Tick(state, 51, 0, edited).Phase);
             Equal(frozen, state.Frozen);
             Equal(Phase.Restricted, Tick(state, 61, 0, edited).Phase);
@@ -83,22 +92,22 @@ internal static class BreakTests
         }),
         ("zero lead permits immediate lock and fractional hour interval", () =>
         {
-            var options = Options with { WorkHours = 0.1, ReminderMinutes = 0, CommitmentMinutes = 0, RestMinutes = 1 };
+            var options = Options with { WorkMinutes = 6, ReminderMinutes = 0, CommitmentMinutes = 0, RestMinutes = 1 };
             var state = new BreakState(); Equal(Phase.Open, Tick(state, 5, 5, options).Phase);
             Equal(Phase.Restricted, Tick(state, 6, 1, options).Phase);
             Equal(Phase.Open, Tick(state, 7, 0, options).Phase);
         }),
         ("break validation rejects unsafe or inconsistent boundaries", () =>
         {
-            foreach (var bad in new[] { Options with { WorkHours = double.NaN }, Options with { WorkHours = double.PositiveInfinity },
-                Options with { WorkHours = 0 }, Options with { RestMinutes = 0 }, Options with { RestMinutes = 181 },
+            foreach (var bad in new[] { Options with { WorkMinutes = double.NaN }, Options with { WorkMinutes = double.PositiveInfinity },
+                Options with { WorkMinutes = 0 }, Options with { RestMinutes = 0 }, Options with { RestMinutes = 181 },
                 Options with { ReminderMinutes = -1 }, Options with { CommitmentMinutes = 9 }, Options with { CommitmentMinutes = 60 } })
                 Throws(bad.Validate);
         }),
         ("editing before commitment keeps accumulated work", () =>
         {
             var state = new BreakState(); Tick(state, 20, 20);
-            Equal(6000d, Tick(state, 20, 0, Options with { WorkHours = 2 }).RemainingWorkSeconds);
+            Equal(6000d, Tick(state, 20, 0, Options with { WorkMinutes = 120 }).RemainingWorkSeconds);
             Tick(state, 20, 0, Options with { Enabled = false }); Equal(0d, state.WorkSeconds);
         })
     ];
