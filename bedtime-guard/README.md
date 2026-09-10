@@ -4,9 +4,9 @@ Windows 常驻睡眠提醒与定时强制休息工具。C# / .NET 10 / WPF；Win
 
 ## 下载与使用
 
-发布内容为一个 **`BedtimeGuard.exe`，不包含 .NET 运行时**。Windows 11 x64 需要先安装 [Microsoft .NET 10 Desktop Runtime（桌面运行时）](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)，请选择与 EXE 一致的架构；只装普通 .NET Runtime 不够。未安装时，Windows 的 .NET 启动提示会引导下载。应用不自动安装运行时。
+发布内容为一个 **`bedtime-guard-win-x64.exe`，不包含 .NET 运行时**，另附 `bedtime-guard-build.json` 记录构建信息和 SHA-256。安装后的内部文件名仍为 `BedtimeGuard.exe`。Windows 11 x64 需要先安装 [Microsoft .NET 10 Desktop Runtime（桌面运行时）](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)，请选择与 EXE 一致的架构；只装普通 .NET Runtime 不够。未安装时，Windows 的 .NET 启动提示会引导下载。应用不自动安装运行时。
 
-1. 下载 GitHub Actions 的 `BedtimeGuard-win-x64-single-exe` 附件并解压，双击 `BedtimeGuard.exe`。
+1. 从 [Latest builds](https://github.com/XUJINKAI/ai-side-project/releases/tag/latest-build) 下载 `bedtime-guard-win-x64.exe` 并双击；PR 测试版可从 Actions 的 `release-bedtime-guard` 附件解压获得。
 2. 在窗口中选择安装位置，点击 **安装**，确认 Windows 管理员授权。无需 CMD、PowerShell 或安装脚本。
 3. 安装完成后在同一窗口配置睡眠计划、定时休息，勾选需要的功能并保存。两项默认都未启用。
 4. 安装后从开始菜单或托盘打开设置。关闭设置窗口继续后台运行。
@@ -88,7 +88,7 @@ dotnet run --project tests/BedtimeGuard.Windows.Tests -c Release
 ./build.ps1 -Runtime win-arm64
 ```
 
-`build.ps1` 运行核心和 Windows 策略测试，再发布不带运行时的单 EXE，输出 `out/BedtimeGuard-win-x64/BedtimeGuard.exe`。GitHub Actions 在一次性 Windows runner 验证实际窗口启动、原生安装、真实服务/IPC、承诺冻结、恢复、重新启用、卸载；产物附 SHA-256。开发者集成测试只能在可丢弃的管理员测试机器运行。
+`build.ps1` 运行核心和 Windows 策略测试，再发布不带运行时的单 EXE，输出 `out/BedtimeGuard-win-x64/BedtimeGuard.exe`。GitHub Actions 在一次性 Windows runner 验证实际窗口启动、原生安装、真实服务/IPC、承诺冻结、恢复、重新启用、卸载；产物附 JSON 构建信息及 SHA-256。开发者集成测试只能在可丢弃的管理员测试机器运行。
 
 自动测试不能替代实际桌面的 UAC 点击、锁屏/解锁、多屏缩放和休眠唤醒验收，见 [验收清单](docs/ACCEPTANCE.md)。
 

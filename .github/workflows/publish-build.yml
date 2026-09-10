@@ -1,0 +1,40 @@
+name: Publish project build
+on:
+  workflow_call:
+    inputs:
+      project:
+        required: true
+        type: string
+      artifact:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: latest-build-publish
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: distribution
+      - name: Update only this project's executable files and JSON
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ inputs.project }}
+        run: python .github/release/release.py publish "$PROJECT" distribution
