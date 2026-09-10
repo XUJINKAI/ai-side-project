@@ -12,7 +12,8 @@ internal static class ServiceRecovery
         if (manager == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
         try
         {
-            var service = OpenService(manager, Paths.ServiceName, 2);
+            // Restart recovery actions require SERVICE_START as well as SERVICE_CHANGE_CONFIG.
+            var service = OpenService(manager, Paths.ServiceName, 0x12);
             if (service == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
             try
             {
