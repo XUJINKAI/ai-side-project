@@ -95,13 +95,13 @@ internal sealed class RestOverlay : IDisposable
 
     private sealed class OverlayWindow : Window
     {
-        private readonly TextBlock heading = new() { FontSize = 26, TextWrapping = TextWrapping.Wrap };
-        private readonly TextBlock remaining = new() { FontSize = 36, FontWeight = FontWeights.Light, Margin = new Thickness(0, 12, 0, 20) };
+        private readonly TextBlock heading = new() { FontSize = 28, TextWrapping = TextWrapping.Wrap };
+        private readonly TextBlock remaining = new() { FontSize = 56, TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.Light, Margin = new Thickness(0, 18, 0, 0) };
         private readonly TextBox editor = new() { AcceptsReturn = true, AcceptsTab = true, TextWrapping = TextWrapping.Wrap,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MinHeight = 100, FontSize = 18, Padding = new Thickness(16),
-            Background = new SolidColorBrush(Color.FromRgb(29, 40, 59)), Foreground = Brushes.White, BorderBrush = Brushes.SlateGray };
-        private readonly TextBlock saveStatus = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 10) };
-        private readonly Button close = new() { Content = "关闭遮罩", Padding = new Thickness(24, 10, 24, 10), HorizontalAlignment = HorizontalAlignment.Right };
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MinHeight = 100, Height = 200, FontSize = 16, Padding = new Thickness(0, 12, 0, 0),
+            Background = Brushes.Transparent, Foreground = new SolidColorBrush(Color.FromRgb(224, 232, 243)), BorderThickness = new Thickness(0), CaretBrush = Brushes.White };
+        private readonly TextBlock saveStatus = new() { FontSize = 12, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 10) };
+        private readonly Button close = new() { Content = "关闭遮罩", Padding = new Thickness(24, 10, 24, 10), HorizontalAlignment = HorizontalAlignment.Left };
         private readonly System.Drawing.Rectangle bounds;
         private bool dismissing;
         private bool syncing;
@@ -113,18 +113,62 @@ internal sealed class RestOverlay : IDisposable
             WindowStartupLocation = WindowStartupLocation.Manual;
             ShowInTaskbar = false; Topmost = true;
             Background = new SolidColorBrush(Color.FromRgb(19, 28, 46)); Foreground = Brushes.White;
-            var panel = new Grid { Margin = new Thickness(40), MaxWidth = 900 };
-            foreach (var height in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto })
-                panel.RowDefinitions.Add(new RowDefinition { Height = height });
-            UIElement[] controls = [heading, remaining, editor, saveStatus, close];
-            for (var i = 0; i < controls.Length; i++) { Grid.SetRow(controls[i], i); panel.Children.Add(controls[i]); }
+            var panel = new Grid { Margin = new Thickness(64), MaxWidth = 1100, VerticalAlignment = VerticalAlignment.Center };
+            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
+            var gap = new ColumnDefinition { Width = new GridLength(72) };
+            panel.ColumnDefinitions.Add(gap);
+            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+            var message = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            message.Children.Add(heading); message.Children.Add(remaining);
+            close.Background = new SolidColorBrush(Color.FromRgb(36, 50, 72));
+            close.Foreground = new SolidColorBrush(Color.FromRgb(228, 235, 245));
+            close.BorderBrush = new SolidColorBrush(Color.FromRgb(65, 83, 109));
+            close.FontSize = 14;
+            close.Template = ButtonTemplate();
+            // Reserve the button's space so the message does not jump when rest ends.
+            message.Children.Add(new Border { Height = 80, Padding = new Thickness(0, 30, 0, 0), Child = close });
+            panel.Children.Add(message);
+            var notebook = new StackPanel();
+            notebook.Children.Add(new TextBlock { Text = "随手记", FontSize = 14, Foreground = new SolidColorBrush(Color.FromRgb(151, 169, 194)) });
+            notebook.Children.Add(editor); notebook.Children.Add(saveStatus);
+            var card = new Border { MaxWidth = 360, Padding = new Thickness(22, 18, 22, 12), CornerRadius = new CornerRadius(12),
+                VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = new SolidColorBrush(Color.FromRgb(23, 33, 52)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(42, 56, 77)), BorderThickness = new Thickness(1), Child = notebook };
+            Grid.SetColumn(card, 2); panel.Children.Add(card);
             Content = panel;
+            SizeChanged += (_, _) =>
+            {
+                panel.Margin = new Thickness(ActualWidth < 900 ? 28 : 64);
+                gap.Width = new GridLength(Math.Clamp(ActualWidth * 0.04, 24, 72));
+                remaining.FontSize = remaining.Text.StartsWith("剩余 ", StringComparison.Ordinal) ? Math.Clamp(ActualWidth / 25, 28, 56) : 28;
+                heading.FontSize = Math.Clamp(ActualWidth / 48, 20, 28);
+                editor.Height = Math.Clamp(ActualHeight * 0.2, 110, 200);
+            };
             System.Windows.Automation.AutomationProperties.SetName(editor, "休息笔记");
             editor.TextChanged += (_, _) => { if (!syncing) edit(this, editor.Text); };
             close.Click += (_, _) => requestClose();
             Loaded += (_, _) => CoverScreen();
             Closing += (_, e) => { if (!dismissing) { e.Cancel = true; Dispatcher.BeginInvoke(requestClose); } };
         }
+        private static ControlTemplate ButtonTemplate()
+        {
+            var border = new FrameworkElementFactory(typeof(Border));
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+            border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            foreach (var property in new[] { Border.BackgroundProperty, Border.BorderBrushProperty, Border.PaddingProperty })
+                border.SetBinding(property, new System.Windows.Data.Binding(property.Name) { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            var content = new FrameworkElementFactory(typeof(ContentPresenter));
+            content.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            content.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+            border.AppendChild(content);
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = border };
+            var hover = new Trigger { Property = IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(BackgroundProperty, new SolidColorBrush(Color.FromRgb(48, 66, 92))));
+            template.Triggers.Add(hover);
+            return template;
+        }
+
         public void SetText(string text)
         {
             if (editor.Text == text) return;
@@ -136,6 +180,7 @@ internal sealed class RestOverlay : IDisposable
         public void Update(string title, string caption, bool canClose, bool readOnly, string message)
         {
             heading.Text = title; remaining.Text = caption;
+            remaining.FontSize = caption.StartsWith("剩余 ", StringComparison.Ordinal) ? Math.Clamp(ActualWidth / 25, 28, 56) : 28;
             close.Visibility = canClose ? Visibility.Visible : Visibility.Collapsed;
             editor.IsReadOnly = readOnly; saveStatus.Text = message;
             if (IsLoaded) CoverScreen();

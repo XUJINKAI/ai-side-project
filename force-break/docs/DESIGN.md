@@ -90,3 +90,5 @@ Hook 线程与超时处理依据 Microsoft 文档：[LowLevelKeyboardProc](https
 OverlayVisible 心跳在所有行为配置下生效，使遮罩中的键鼠操作不会被算作工作。UI 失联五秒后显示状态租约失效，仍由会话与活动条件决定是否计时。
 
 跨夜手动休息在 FrozenBreak 中显式标记，允许超过自动休息的三小时上限，但最多五十小时覆盖下一日及夏令时变化；自动周期没有获得这个例外。早睡和手动休息同时限制时，显示最晚解除时间，遮罩和锁屏取仍然有效的两个快照的合并要求；一个到期后继续另一个的行为。
+
+命令行输出由 `CommandOutput` 处理：保留原始重定向句柄后附加父控制台，真实控制台使用 WriteConsoleW，管道匹配 GetConsoleOutputCP，文件或无控制台管道使用 UTF-8。不修改父控制台代码页。参考 [WriteConsole](https://learn.microsoft.com/en-us/windows/console/writeconsole)。

@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using ForceBreak.Core;
 using ForceBreak.Windows;
 using Microsoft.Win32;
 using System.Security.Principal;
 
 if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("Windows is required."); return 1; }
+if (args.SequenceEqual(new[] { "--console-probe" })) return ConsoleProbe.Run();
 var folder = Path.Combine(Path.GetTempPath(), "ForceBreak-" + Guid.NewGuid());
 var subkey = @"Software\ForceBreak.Tests\" + Guid.NewGuid();
 var sid = WindowsIdentity.GetCurrent().User!.Value;
@@ -14,6 +16,15 @@ var count = 0;
 void Check(bool value, string name) { if (!value) throw new Exception(name); count++; Console.WriteLine("PASS " + name); }
 try
 {
+    var probeInfo = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+    if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        probeInfo.ArgumentList.Add(System.Reflection.Assembly.GetExecutingAssembly().Location);
+    probeInfo.ArgumentList.Add("--console-probe");
+    using (var probe = Process.Start(probeInfo)!)
+    {
+        if (!probe.WaitForExit(15000)) { probe.Kill(true); throw new Exception("Console encoding probe timed out"); }
+        Check(probe.ExitCode == 0, $"Chinese console and pipe output works under CP936 and UTF-8 (probe {probe.ExitCode})");
+    }
     using (var monitor = new InputActivityMonitor())
     {
         Check(monitor.Snapshot().Available, "both low-level hooks install on their message-loop thread");

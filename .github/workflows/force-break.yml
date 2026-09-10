@@ -42,6 +42,11 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Test and build single EXE without runtime
         run: ./build.ps1 -Runtime win-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: force-break-overlay-previews
+          path: force-break/out/overlay-previews/*.png
+          if-no-files-found: error
       - name: Stage the requested download filename
         run: |
           New-Item -ItemType Directory -Force out/release | Out-Null
