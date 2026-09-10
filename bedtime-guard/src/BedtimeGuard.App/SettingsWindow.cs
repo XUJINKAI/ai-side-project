@@ -59,7 +59,7 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(save); panel.Children.Add(feedback);
         panel.Children.Add(new TextBlock
         {
-            Text = "关闭窗口后继续在托盘运行。紧急恢复：从开始菜单运行“Bedtime Guard — 恢复”，需要管理员权限。",
+            Text = "关闭窗口后继续在托盘运行。紧急恢复：从开始菜单运行“Bedtime Guard - Repair（恢复）”，需要管理员权限。",
             TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 20, 0, 0)
         });
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };

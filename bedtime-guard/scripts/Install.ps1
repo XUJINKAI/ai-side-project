@@ -67,7 +67,9 @@ try {
     $shortcut = $shell.CreateShortcut((Join-Path $shortcuts 'Bedtime Guard.lnk'))
     $shortcut.TargetPath = $app; $shortcut.Save()
     foreach ($entry in @(@('Repair','恢复'), @('Resume','重新启用'), @('Uninstall','卸载'))) {
-        $shortcut = $shell.CreateShortcut((Join-Path $shortcuts "Bedtime Guard — $($entry[1]).lnk"))
+        # WSH shortcut filenames can pass through the system ANSI codepage on English Windows.
+        $shortcut = $shell.CreateShortcut((Join-Path $shortcuts "Bedtime Guard - $($entry[0]).lnk"))
+        $shortcut.Description = $entry[1]
         $shortcut.TargetPath = "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe"
         $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir/scripts/$($entry[0]).ps1`""
         $shortcut.Save()

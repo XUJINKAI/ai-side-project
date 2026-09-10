@@ -11,7 +11,8 @@ try {
     $service = Get-Service BedtimeGuard
     if ($service.Status -ne 'Running') { throw 'Service did not start.' }
     # Exercise the real authenticated named pipe from the selected account.
-    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'BedtimeGuard.v1', [IO.Pipes.PipeDirection]::InOut)
+    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'BedtimeGuard.v1', [IO.Pipes.PipeDirection]::InOut,
+        [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(5000)
         $body = [Text.Encoding]::UTF8.GetBytes('{"Command":"status"}')

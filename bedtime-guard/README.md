@@ -42,9 +42,9 @@ Windows 常驻睡眠提醒与适度强制锁屏工具。C# / .NET 10 / WPF，后
 
 | 入口 | 等效脚本 | 行为 |
 | --- | --- | --- |
-| 恢复 | `scripts\Repair.ps1` | 写入暂停标记、停止服务、还原任务管理器策略 |
-| 重新启用 | `scripts\Resume.ps1` | 清除暂停标记，启动服务，恢复保存的计划 |
-| 卸载 | `scripts\Uninstall.ps1` | 先恢复策略，再删除服务、恢复任务、进程、快捷方式和文件 |
+| Bedtime Guard - Repair（恢复） | `scripts\Repair.ps1` | 写入暂停标记、停止服务、还原任务管理器策略 |
+| Bedtime Guard - Resume（重新启用） | `scripts\Resume.ps1` | 清除暂停标记，启动服务，恢复保存的计划 |
+| Bedtime Guard - Uninstall（卸载） | `scripts\Uninstall.ps1` | 先恢复策略，再删除服务、恢复任务、进程、快捷方式和文件 |
 
 恢复入口始终保留，没有冷却时间、答题或延期额度。重新启用时，如果原来的当晚快照仍未到解除时间，会继续执行它。
 

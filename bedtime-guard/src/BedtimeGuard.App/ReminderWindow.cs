@@ -34,7 +34,8 @@ internal sealed class ReminderWindow : Window
         {
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
-            SourceInitialized += (_, _) => SetWindowPos(new WindowInteropHelper(this).Handle, new IntPtr(-1),
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Loaded += (_, _) => SetWindowPos(new WindowInteropHelper(this).Handle, new IntPtr(-1),
                 bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x0040);
         }
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
