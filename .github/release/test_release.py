@@ -49,22 +49,41 @@ class ReleaseTests(unittest.TestCase):
         (self.folder / release.manifest_name(project)).write_text(json.dumps(info))
         return info
 
-    def test_bedtime_update_preserves_lansend_and_commits_json_last(self):
-        self.bundle('bedtime-guard')
+    def test_removed_project_bundle_is_deleted_without_touching_registered_projects(self):
+        info = {'schema_version': 1, 'project': 'retired-tool', 'repository': 'owner/repo',
+                'files': [{'name': 'retired-tool-win-x64.exe'}]}
+        gh = FakeGitHub({'retired-tool-build.json': json.dumps(info).encode(),
+                         'retired-tool-win-x64.exe': b'retired',
+                         'lansend-build.json': b'keep', 'force-break-win-x64.exe': b'keep',
+                         'notes.txt': b'keep'})
+        gh.repo = 'owner/repo'
+        release.remove_retired_projects(gh, {})
+        self.assertEqual(set(gh.files), {'lansend-build.json', 'force-break-win-x64.exe', 'notes.txt'})
+
+    def test_removed_project_cannot_delete_another_project_asset(self):
+        info = {'schema_version': 1, 'project': 'retired-tool', 'repository': 'owner/repo',
+                'files': [{'name': 'lansend-win-x64.exe'}]}
+        gh = FakeGitHub({'retired-tool-build.json': json.dumps(info).encode(), 'lansend-win-x64.exe': b'keep'})
+        gh.repo = 'owner/repo'
+        release.remove_retired_projects(gh, {})
+        self.assertIn('lansend-win-x64.exe', gh.files)
+
+    def test_force_break_update_preserves_lansend_and_commits_json_last(self):
+        self.bundle('force-break')
         old = {'lansend-win-x64.exe': b'keep windows', 'lansend-linux-amd64': b'keep linux',
-               'lansend-build.json': b'keep metadata', 'bedtime-guard-win-x64.exe': b'old exe',
-               'bedtime-guard-build.json': b'old metadata'}
+               'lansend-build.json': b'keep metadata', 'force-break-win-x64.exe': b'old exe',
+               'force-break-build.json': b'old metadata'}
         gh = FakeGitHub(old)
-        release.replace_project(gh, {}, 'bedtime-guard', self.folder)
+        release.replace_project(gh, {}, 'force-break', self.folder)
         for name in release.PROJECTS['lansend'] + ['lansend-build.json']:
             self.assertEqual(gh.files[name], old[name])
-        self.assertEqual(gh.operations[-1], 'bedtime-guard-build.json')
+        self.assertEqual(gh.operations[-1], 'force-break-build.json')
         self.assertEqual(set(gh.files), set(old))
 
     def test_failed_second_lansend_upload_restores_entire_old_project(self):
         self.bundle('lansend')
         old = {name: b'old ' + name.encode() for name in release.PROJECTS['lansend'] + ['lansend-build.json']}
-        old['bedtime-guard-win-x64.exe'] = b'other project'
+        old['force-break-win-x64.exe'] = b'other project'
         gh = FakeGitHub(old, fail_name='lansend-linux-amd64')
         with self.assertRaises(RuntimeError):
             release.replace_project(gh, {}, 'lansend', self.folder)
@@ -72,17 +91,17 @@ class ReleaseTests(unittest.TestCase):
 
     def test_failed_first_publication_removes_partial_new_assets(self):
         self.bundle('lansend')
-        gh = FakeGitHub({'bedtime-guard-build.json': b'keep'}, fail_name='lansend-build.json')
+        gh = FakeGitHub({'force-break-build.json': b'keep'}, fail_name='lansend-build.json')
         with self.assertRaises(RuntimeError):
             release.replace_project(gh, {}, 'lansend', self.folder)
-        self.assertEqual(gh.files, {'bedtime-guard-build.json': b'keep'})
+        self.assertEqual(gh.files, {'force-break-build.json': b'keep'})
 
     def test_modified_binary_never_reaches_upload(self):
-        self.bundle('bedtime-guard')
-        (self.folder / 'bedtime-guard-win-x64.exe').write_bytes(b'tampered')
+        self.bundle('force-break')
+        (self.folder / 'force-break-win-x64.exe').write_bytes(b'tampered')
         gh = FakeGitHub()
         with self.assertRaises(ValueError):
-            release.replace_project(gh, {}, 'bedtime-guard', self.folder)
+            release.replace_project(gh, {}, 'force-break', self.folder)
         self.assertEqual(gh.operations, [])
 
     def test_unexpected_file_is_not_published(self):
@@ -105,14 +124,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(release.needs_build('lansend', 'inputs', {}, None))
 
     def test_stale_build_cannot_touch_release(self):
-        self.bundle('bedtime-guard')
+        self.bundle('force-break')
         gh = FakeGitHub()
         gh.repo = 'owner/repo'
         gh.api = lambda _: {'default_branch': 'master'}
         with patch.object(release, 'GitHub', return_value=gh), patch.object(release, 'command', return_value=b'commit\n'), \
              patch.object(release, 'fingerprint', return_value='newer inputs'), \
              patch.dict(release.os.environ, {'GITHUB_REF': 'refs/heads/master'}):
-            release.publish('bedtime-guard', self.folder)
+            release.publish('force-break', self.folder)
         self.assertEqual(gh.operations, [])
 
     def test_nondefault_branch_cannot_publish(self):
@@ -122,7 +141,7 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release, 'GitHub', return_value=gh), \
              patch.dict(release.os.environ, {'GITHUB_REF': 'refs/heads/feature'}):
             with self.assertRaises(RuntimeError):
-                release.publish('bedtime-guard', self.folder)
+                release.publish('force-break', self.folder)
         self.assertEqual(gh.operations, [])
 
 

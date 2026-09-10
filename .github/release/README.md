@@ -6,13 +6,13 @@
 
 - `lansend-win-x64.exe`
 - `lansend-linux-amd64`
-- `bedtime-guard-win-x64.exe`
+- `force-break-win-x64.exe`
 - `lansend-build.json`
-- `bedtime-guard-build.json`
+- `force-break-build.json`
 
 三个程序均直接上传，不生成 ZIP、TAR 或独立校验文件。Actions 内部跨 job 传递使用 artifact，最终 Release 附件是原始文件。GitHub 自带的 Source code ZIP/TAR 入口不属于本流程上传的产物。
 
-Linux 下载后可能需要 `chmod +x lansend-linux-amd64`。Bedtime Guard 下载文件采用统一名称，安装后的内部文件名仍为 `BedtimeGuard.exe`，无需用户重命名；需要 .NET 10 Desktop Runtime x64。LanSend 使用 CGO_ENABLED=0 构建 Windows/Linux x86-64 两个平台。
+Linux 下载后可能需要 `chmod +x lansend-linux-amd64`。Force Break 下载文件采用统一名称，安装后的内部文件名仍为 `ForceBreak.exe`，无需用户重命名；需要 .NET 10 Desktop Runtime x64。LanSend 使用 CGO_ENABLED=0 构建 Windows/Linux x86-64 两个平台。
 
 ## 构建与更新规则
 
@@ -51,3 +51,5 @@ python -m unittest discover -s .github/release -p 'test_*.py' -v
 ```
 
 测试覆盖独立项目更新、错误校验拒绝、缺失产物重建、非主分支拒绝、旧构建拒绝，以及覆盖失败回滚。这些测试模拟 API；真实 Release 上传需在合并默认分支后的首次发布确认。
+
+发布成功后清理已从项目目录表移除的构建：根据本仓库的构建 JSON 确认归属，仅删除该退出项目声明的附件和构建 JSON。当前项目、其他项目和无关附件不会被删除。
