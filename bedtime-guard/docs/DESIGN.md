@@ -64,7 +64,7 @@ Program Files 直属的安装目录只允许 SYSTEM/Administrators 写入，普�
 
 App 是唯一发布入口，引用服务库。普通启动进入 WPF 管理界面，`--service` 进入 ServiceBase，`--recover-expired` 执行策略恢复。Framework-dependent PublishSingleFile，不打包运行时；要求匹配架构的 .NET 10 Desktop Runtime。无脚本调用、外部命令或用户命令行步骤。
 
-安装按钮先记录原用户 SID，复制单 EXE 到临时目录，再通过 ShellExecute runas 请求 UAC；进程参数采用 ArgumentList。提权副本显示维护进度和错误，直接调用 SCM Win32、任务计划 COM、快捷方式 COM 与注册表 API。卸载副本位于安装目录外，可以结束路径完全匹配的托盘并删除安装 EXE。卸载登记 `--uninstall-ui` 同样打开图形确认。管理员维护入口属于显式安全出口，并非延期功能。
+安装按钮先记录原用户 SID，复制单 EXE 到临时目录，再通过 ShellExecute runas 请求 UAC；进程参数采用 ArgumentList。提权副本显示维护进度和错误，直接调用 SCM Win32、任务计划 COM、快捷方式 COM 与注册表 API。卸载副本位于安装目录外，可以结束路径完全匹配的托盘并删除安装 EXE。卸载登记 `--uninstall-ui` 同样打开图形确认。紧急暂停/强制卸载只接受 README 中的完整长参数，无图形入口或短别名。普通卸载先停止并刷新服务状态，再计算当前承诺；拒绝时恢复原来运行的服务，不留下暂停标记。
 
 - [WTS 会话解锁状态](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/ns-wtsapi32-wtsinfoex_level1_w)
 - [.NET 单文件发布](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview)

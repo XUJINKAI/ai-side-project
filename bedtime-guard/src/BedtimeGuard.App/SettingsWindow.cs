@@ -25,6 +25,7 @@ internal sealed class SettingsWindow : Window
     private readonly ComboBox zones = new() { MinWidth = 240, DisplayMemberPath = "DisplayName" };
     private readonly Dictionary<DayOfWeek, CheckBox> days = new();
     private readonly Button save = new() { Content = "保存计划", Padding = new Thickness(22, 9, 22, 9), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = false };
+    private Button? uninstall;
     private bool initialized;
     private bool saving;
     public event Action<Status>? Saved;
@@ -41,9 +42,10 @@ internal sealed class SettingsWindow : Window
         var installPath = new TextBox { Text = NativeInstaller.DefaultDirectory };
         AddRow(panel, "安装位置", installPath);
         var management = new WrapPanel { Margin = new Thickness(0, 8, 0, 18) };
-        foreach (var action in Enum.GetValues<MaintenanceAction>())
+        foreach (var action in new[] { MaintenanceAction.Install, MaintenanceAction.Resume, MaintenanceAction.Uninstall })
         {
             var button = new Button { Content = MaintenanceLauncher.Label(action), Padding = new Thickness(10, 7, 10, 7), Margin = new Thickness(0, 0, 8, 8) };
+            if (action == MaintenanceAction.Uninstall) { uninstall = button; button.IsEnabled = false; button.ToolTip = "正在确认承诺状态"; }
             button.Click += async (_, _) =>
             {
                 management.IsEnabled = false;
@@ -83,7 +85,7 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(save); panel.Children.Add(feedback);
         panel.Children.Add(new TextBlock
         {
-            Text = "安装后由后台服务常驻执行。安装、恢复、重新启用与卸载会请求管理员权限；日常配置不需要提权。紧急恢复也可从开始菜单的 Bedtime Guard - Recovery 打开。",
+            Text = "安装后由后台服务常驻执行。安装、重新启用与卸载会请求管理员权限；日常配置不需要提权。已承诺的睡眠或休息结束前，卸载不可用。",
             TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 20, 0, 0)
         });
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -111,6 +113,11 @@ internal sealed class SettingsWindow : Window
         if (status.Break is { } rest)
             detail.Text += rest.SuppressedByNight ? "\n定时休息：夜间限制期间暂停" :
                 $"\n定时休息：{PhaseText(rest.Phase, true)} · 距离休息约 {Math.Ceiling(rest.RemainingWorkSeconds / 60)} 分钟\n本轮休息 {Format(rest.LockAt)}—{Format(rest.ReleaseAt)}";
+        if (uninstall is not null)
+        {
+            uninstall.IsEnabled = status.Phase is Phase.Disabled or Phase.Open;
+            uninstall.ToolTip = uninstall.IsEnabled ? "卸载程序与计划数据" : "已进入承诺期，当前安排结束前不能卸载";
+        }
         save.IsEnabled = !saving;
         if (initialized) return;
         initialized = true;
@@ -127,7 +134,7 @@ internal sealed class SettingsWindow : Window
         zones.SelectedItem = zones.Items.Cast<TimeZoneInfo>().FirstOrDefault(z => z.Id == s.TimeZoneId);
     }
 
-    public void SetConnectionError(string message) { stateText.Text = "服务未就绪"; detail.Text = message; save.IsEnabled = false; }
+    public void SetConnectionError(string message) { stateText.Text = "服务未就绪"; detail.Text = message; save.IsEnabled = false; if (uninstall is not null) { uninstall.IsEnabled = false; uninstall.ToolTip = "无法确认承诺状态，暂不可卸载"; } }
 
     private async Task Save()
     {

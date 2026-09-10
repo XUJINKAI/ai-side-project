@@ -19,7 +19,7 @@ internal static class MaintenanceLauncher
         MaintenanceAction.Resume => "重新启用", MaintenanceAction.Uninstall => "卸载", _ => "维护"
     };
 
-    public static async Task Run(MaintenanceAction action, string directory)
+    public static async Task Run(MaintenanceAction action, string directory, string? emergencyConfirmation = null)
     {
         var description = action switch
         {
@@ -44,6 +44,7 @@ internal static class MaintenanceLauncher
             var start = new ProcessStartInfo(helper) { UseShellExecute = true, Verb = "runas" };
             foreach (var argument in new[] { "--maintenance", action.ToString(), identity.User!.Value, directory, "--temporary-helper" })
                 start.ArgumentList.Add(argument);
+            if (emergencyConfirmation is not null) start.ArgumentList.Add(emergencyConfirmation);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("无法启动维护界面。");
             await process.WaitForExitAsync();
         }
@@ -76,7 +77,7 @@ internal static class MaintenanceLauncher
 
 internal sealed class MaintenanceWindow : Window
 {
-    public MaintenanceWindow(MaintenanceAction action, string sid, string directory)
+    public MaintenanceWindow(MaintenanceAction action, string sid, string directory, string? emergencyConfirmation = null)
     {
         Title = "Bedtime Guard · " + MaintenanceLauncher.Label(action);
         Width = 540; Height = 300; ResizeMode = ResizeMode.NoResize;
@@ -94,7 +95,7 @@ internal sealed class MaintenanceWindow : Window
         {
             try
             {
-                await Task.Run(() => NativeInstaller.Execute(action, sid, directory, Environment.ProcessPath!));
+                await Task.Run(() => NativeInstaller.Execute(action, sid, directory, Environment.ProcessPath!, emergencyConfirmation));
                 result.Text = action == MaintenanceAction.Install ? "安装完成。请关闭此窗口，返回主界面配置并启用计划。" : MaintenanceLauncher.Label(action) + "已完成。";
                 code = 0;
             }

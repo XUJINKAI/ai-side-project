@@ -20,6 +20,9 @@ public static class NativeInstaller
     public static string DefaultDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "BedtimeGuard");
     public static string Shortcuts => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Bedtime Guard");
 
+    public const string EmergencyPause = "--i-confirm-i-am-breaking-my-commitment-and-want-to-emergency-pause-bedtime-guard-until-i-manually-enable-it-again";
+    public const string EmergencyUninstall = "--i-confirm-i-am-breaking-my-commitment-and-want-to-permanently-uninstall-bedtime-guard-and-delete-all-my-saved-plans";
+
     public static bool IsInstalled()
     {
         using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + Paths.ServiceName);
@@ -33,7 +36,7 @@ public static class NativeInstaller
             string.Equals(Path.Combine(directory, "BedtimeGuard.exe"), executable, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static void Execute(MaintenanceAction action, string userSid, string installDirectory, string sourceExe)
+    public static void Execute(MaintenanceAction action, string userSid, string installDirectory, string sourceExe, string? emergencyConfirmation = null)
     {
         Paths.RequireAdministrator();
         // One machine-wide installation transaction; users cannot mutate this admin-owned mutex.
@@ -46,9 +49,11 @@ public static class NativeInstaller
             switch (action)
             {
                 case MaintenanceAction.Install: Install(userSid, installDirectory, sourceExe); break;
-                case MaintenanceAction.Repair: Repair(); break;
+                case MaintenanceAction.Repair:
+                    if (emergencyConfirmation != EmergencyPause) throw new InvalidOperationException("紧急暂停需要完整的管理员确认参数，见 README。");
+                    Repair(); break;
                 case MaintenanceAction.Resume: Resume(); break;
-                case MaintenanceAction.Uninstall: Uninstall(); break;
+                case MaintenanceAction.Uninstall: Uninstall(emergencyConfirmation == EmergencyUninstall); break;
                 default: throw new ArgumentOutOfRangeException(nameof(action));
             }
         }
@@ -85,7 +90,7 @@ public static class NativeInstaller
             Directory.CreateDirectory(Shortcuts);
             shortcutCreated = true;
             CreateShortcut("Bedtime Guard.lnk", executable, "");
-            CreateShortcut("Bedtime Guard - Recovery.lnk", executable, "--recovery");
+
             using (var registration = Registry.LocalMachine.CreateSubKey(UninstallKey, true))
             {
                 registrationCreated = true;
@@ -128,7 +133,7 @@ public static class NativeInstaller
         Start();
     }
 
-    private static void Uninstall()
+    private static void Uninstall(bool emergency)
     {
         var installation = JsonStorage.Read<Installation>(Paths.Install);
         var parent = Path.GetDirectoryName(installation.AppPath)!;
@@ -140,6 +145,7 @@ public static class NativeInstaller
             throw new InvalidDataException("安装路径不符合预期，未删除文件。");
         if (Environment.ProcessPath?.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) == true)
             throw new InvalidOperationException("卸载应从临时维护副本运行。");
+        if (!emergency) CheckUninstallCommitment();
         Repair();
         if (File.Exists(Paths.Lease)) throw new InvalidOperationException("策略恢复尚未完成，请让目标用户登录后重试。");
         ScheduledRecovery.Remove();
@@ -150,6 +156,37 @@ public static class NativeInstaller
         Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false);
         if (Directory.Exists(Shortcuts)) Directory.Delete(Shortcuts, true);
         Directory.Delete(Paths.Data, true);
+    }
+
+    private static void CheckUninstallCommitment()
+    {
+        // Stop and flush the authority before checking: UI state and disk checkpoints may be stale.
+        var running = false;
+        if (IsInstalled())
+        {
+            using var service = new ServiceController(Paths.ServiceName);
+            running = service.Status != ServiceControllerStatus.Stopped;
+        }
+        Stop();
+        try
+        {
+            var state = JsonStorage.Read<PlannerState>(Paths.State);
+            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
+            var now = DateTimeOffset.UtcNow;
+            var planner = new Planner(state, () => System.Security.Cryptography.RandomNumberGenerator.GetInt32(1_000_000));
+            var night = planner.Tick(now);
+            var rest = BreakPlanner.Tick(state.Break, state.Schedule.Breaks, now, TimeSpan.Zero,
+                night.Phase == Phase.Restricted, state.Schedule.DisableTaskManager);
+            JsonStorage.Write(Paths.State, state);
+            if (BreakPlanner.Combine(night, rest).Phase is Phase.Committed or Phase.Reminder or Phase.Restricted)
+                throw new InvalidOperationException("已进入承诺期，当前安排结束前不能卸载。");
+        }
+        catch
+        {
+            // A rejected uninstall must not become a way to pause the service.
+            if (running && !File.Exists(Paths.Paused)) Start();
+            throw;
+        }
     }
 
     private static void StopUserProcesses(string executable)

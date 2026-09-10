@@ -35,7 +35,7 @@ try
     try { NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable); }
     catch (InvalidOperationException) { duplicateRejected = true; }
     Check(duplicateRejected && File.Exists(Path.Combine(directory, "BedtimeGuard.exe")), "existing installation is not overwritten");
-    NativeInstaller.Execute(MaintenanceAction.Repair, sid, directory, executable);
+    NativeInstaller.Execute(MaintenanceAction.Repair, sid, directory, executable, NativeInstaller.EmergencyPause);
     Check(File.Exists(Paths.Paused), "native repair persists pause marker");
     var state = JsonStorage.Read<PlannerState>(Paths.State);
     state.Schedule = state.Schedule with { Breaks = new BreakOptions { Enabled = true, WorkHours = 0.1, RestMinutes = 1, ReminderMinutes = 5, CommitmentMinutes = 5 } };
@@ -49,16 +49,32 @@ try
     reply = await Wire.Send(new Request("save", state.Schedule with { Breaks = new BreakOptions() }));
     Check(reply.Ok && reply.Status?.Break?.Phase == Phase.Reminder && reply.Status.Break.ReleaseAt == frozenRelease,
         "real IPC cannot cancel or postpone an already committed break");
+    var uninstallRejected = false;
+    try { NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable); }
+    catch (InvalidOperationException) { uninstallRejected = true; }
+    reply = await Wire.Send(new Request("status"));
+    Check(uninstallRejected && reply.Ok && reply.Status?.Break?.ReleaseAt == frozenRelease && !File.Exists(Paths.Paused),
+        "normal uninstall during commitment is rejected and enforcement resumes");
+    var pauseRejected = false;
+    try { NativeInstaller.Execute(MaintenanceAction.Repair, sid, directory, executable); }
+    catch (InvalidOperationException) { pauseRejected = true; }
+    Check(pauseRejected && !File.Exists(Paths.Paused), "short maintenance entry cannot pause restrictions");
+    Check(!File.Exists(Path.Combine(NativeInstaller.Shortcuts, "Bedtime Guard - Recovery.lnk")), "no graphical emergency shortcut");
     using (var recover = Process.Start(new ProcessStartInfo(Path.Combine(directory, "BedtimeGuard.exe"))
            { UseShellExecute = false, ArgumentList = { "--recover-expired" } })!)
     {
         await recover.WaitForExitAsync();
         Check(recover.ExitCode == 0, "same EXE supports independent recovery task");
     }
-    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable);
+    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall);
     installed = false;
     Check(!Directory.Exists(directory) && !Directory.Exists(Paths.Data) && !Directory.Exists(NativeInstaller.Shortcuts), "native uninstall removes application, state and shortcuts");
     Check(!NativeInstaller.IsInstalled(), "native uninstall removes service registration");
+    NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable);
+    installed = true;
+    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable);
+    installed = false;
+    Check(!NativeInstaller.IsInstalled(), "ordinary uninstall remains available outside commitment");
     Console.WriteLine("PASS single EXE GUI launch, native install, IPC, recovery, resume and uninstall");
     return 0;
 }
@@ -66,7 +82,7 @@ catch (Exception error) { Console.Error.WriteLine(error); return 1; }
 finally
 {
     if (ui is not null) { if (!ui.HasExited) ui.Kill(); ui.Dispose(); }
-    if (installed) NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable);
+    if (installed) NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall);
 }
 
 static void Check(bool condition, string name)
