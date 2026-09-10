@@ -6,7 +6,7 @@ public sealed class Planner(PlannerState state, Func<int> draw)
 
     public Status Tick(DateTimeOffset now)
     {
-        if (State.Version != 2 || State.Draws is null) throw new InvalidDataException("Invalid planner state.");
+        if (State.Version != 3 || State.Draws is null) throw new InvalidDataException("Invalid planner state.");
         State.Schedule.Validate();
         if (State.Frozen is { } frozen)
         {
@@ -56,7 +56,7 @@ public sealed class Planner(PlannerState state, Func<int> draw)
 
     private Status Describe(Night n, DateTimeOffset now) => new(State.Schedule,
         now >= n.LockAt ? Phase.Restricted : now >= n.RemindAt ? Phase.Reminder : Phase.Committed,
-        n.RemindAt, n.LockAt, n.ReleaseAt, n.DisableTaskManager);
+        n.RemindAt, n.LockAt, n.ReleaseAt, n.DisableTaskManager, EffectiveBehavior: n.Behavior);
 
     private int GetDraw(DateOnly date)
     {
@@ -79,7 +79,7 @@ public sealed class Planner(PlannerState state, Func<int> draw)
             Resolve(date.ToDateTime(s.Commitment).AddMinutes(minutes), zone, false),
             Resolve(date.ToDateTime(s.Reminder), zone, false),
             Resolve(date.ToDateTime(s.Bedtime), zone, false),
-            Resolve(date.AddDays(1).ToDateTime(s.Release), zone, true), s.DisableTaskManager);
+            Resolve(date.AddDays(1).ToDateTime(s.Release), zone, true), s.DisableTaskManager, s.Behavior);
     }
 
     internal static DateTimeOffset Resolve(DateTime local, TimeZoneInfo zone, bool end)

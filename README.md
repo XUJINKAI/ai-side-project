@@ -6,9 +6,9 @@
 
 ### 工具
 
-- #### [bedtime-guard](bedtime-guard/) (C# / Windows)
+- #### [Force Break](bedtime-guard/) (C# / Windows)
 
-随机承诺时间的睡眠提醒与强制锁屏工具，包含托盘界面、Windows 服务、可选任务管理器限制和管理员恢复。
+早睡与定时休息工具，包含四页设置、键鼠空闲检测、托盘快捷休息、多屏遮罩、可选锁屏和承诺期限制。
 
 - #### lansend (go)
 
@@ -44,9 +44,9 @@ C Type System, 为 C 的结构体定义类型，支持 JSON 序列化/反序列�
 | --- | --- |
 | `lansend-win-x64.exe` | LanSend Windows x64 |
 | `lansend-linux-amd64` | LanSend Linux x86-64，下载后按需添加执行权限 |
-| `bedtime-guard-win-x64.exe` | Bedtime Guard Windows x64，需要 .NET 10 Desktop Runtime |
+| `bedtime-guard-win-x64.exe` | Force Break Windows x64，需要 .NET 10 Desktop Runtime |
 | `lansend-build.json` | 两个平台 LanSend 的构建来源与校验信息 |
-| `bedtime-guard-build.json` | Bedtime Guard 的构建来源与校验信息 |
+| `bedtime-guard-build.json` | Force Break 的构建来源与校验信息 |
 
 [发布流程与 JSON 字段说明](.github/release/README.md)。Release 附件为原始文件，不打包；PR 的 Actions artifact 只供预览。
 

@@ -3,10 +3,7 @@ namespace BedtimeGuard.Core;
 public sealed record BreakOptions
 {
     public bool Enabled { get; init; }
-    public double WorkMinutes { get; init; } = 60;
-    // Read pre-0.3 configuration; new writes only contain WorkMinutes.
-    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public double? WorkHours { get => null; init { if (value is { } hours) WorkMinutes = hours * 60; } }
+    public double WorkMinutes { get; init; } = 50;
     public int RestMinutes { get; init; } = 10;
     public int ReminderMinutes { get; init; } = 10;
     public int CommitmentMinutes { get; init; } = 10;
@@ -22,7 +19,7 @@ public sealed record BreakOptions
 }
 
 public sealed record FrozenBreak(DateTimeOffset RemindAt, DateTimeOffset LockAt,
-    DateTimeOffset ReleaseAt, bool DisableTaskManager);
+    DateTimeOffset ReleaseAt, bool DisableTaskManager, BehaviorOptions Behavior);
 
 public sealed class BreakState
 {
@@ -32,12 +29,12 @@ public sealed class BreakState
 
 public sealed record BreakStatus(Phase Phase, double RemainingWorkSeconds,
     DateTimeOffset? RemindAt = null, DateTimeOffset? LockAt = null, DateTimeOffset? ReleaseAt = null,
-    bool TaskManagerRequested = false, bool SuppressedByNight = false);
+    bool TaskManagerRequested = false, bool SuppressedByNight = false, BehaviorOptions? Behavior = null);
 
 public static class BreakPlanner
 {
     public static BreakStatus Tick(BreakState state, BreakOptions options, DateTimeOffset now,
-        TimeSpan unlockedElapsed, bool nightRestricted, bool disableTaskManager)
+        TimeSpan unlockedElapsed, bool nightRestricted, bool disableTaskManager, BehaviorOptions? behavior = null)
     {
         options.Validate();
         if (!double.IsFinite(state.WorkSeconds) || state.WorkSeconds < 0) throw new InvalidDataException("Invalid break timer.");
@@ -70,16 +67,26 @@ public static class BreakPlanner
         {
             var start = now.AddSeconds(remaining);
             state.Frozen = new(start.AddMinutes(-options.ReminderMinutes), start,
-                start.AddMinutes(options.RestMinutes), disableTaskManager);
+                start.AddMinutes(options.RestMinutes), disableTaskManager, behavior ?? new BehaviorOptions());
             return Describe(state.Frozen, now);
         }
         return new(Phase.Open, remaining);
     }
 
+    public static void StartManual(BreakState state, DateTimeOffset now, int minutes, Schedule schedule, Phase nightPhase)
+    {
+        if (minutes is not (5 or 10 or 30)) throw new ArgumentException("手动休息只能选择 5、10 或 30 分钟。");
+        if (nightPhase == Phase.Restricted) throw new InvalidOperationException("正在执行早睡限制，无需另开休息。");
+        if (state.Frozen is { } frozen && now < frozen.ReleaseAt)
+            throw new InvalidOperationException("本轮休息已经承诺或正在执行，不能替换；结束后可开始新的休息。");
+        state.WorkSeconds = 0;
+        state.Frozen = new(now, now, now.AddMinutes(minutes), schedule.DisableTaskManager, schedule.Behavior);
+    }
+
     private static BreakStatus Describe(FrozenBreak frozen, DateTimeOffset now) => new(
         now >= frozen.LockAt ? Phase.Restricted : now >= frozen.RemindAt ? Phase.Reminder : Phase.Committed,
         Math.Max(0, (frozen.LockAt - now).TotalSeconds), frozen.RemindAt, frozen.LockAt,
-        frozen.ReleaseAt, frozen.DisableTaskManager);
+        frozen.ReleaseAt, frozen.DisableTaskManager, Behavior: frozen.Behavior);
 
     public static Status Combine(Status night, BreakStatus rest)
     {
@@ -98,7 +105,8 @@ public static class BreakPlanner
             ReminderAt = chooseBreak ? rest.RemindAt : night.ReminderAt,
             LockAt = chooseBreak ? rest.LockAt : night.LockAt,
             ReleaseAt = chooseBreak ? rest.ReleaseAt : night.ReleaseAt,
-            TaskManagerRequested = protect, PolicyUntil = until, Break = rest, IsBreak = chooseBreak
+            TaskManagerRequested = protect, PolicyUntil = until, Break = rest, IsBreak = chooseBreak,
+            EffectiveBehavior = chooseBreak ? rest.Behavior : night.EffectiveBehavior
         };
     }
 }

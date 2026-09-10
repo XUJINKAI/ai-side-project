@@ -2,6 +2,8 @@
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
+    <Product>Force Break</Product>
+    <Title>Force Break</Title>
     <AssemblyName>BedtimeGuard</AssemblyName>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>

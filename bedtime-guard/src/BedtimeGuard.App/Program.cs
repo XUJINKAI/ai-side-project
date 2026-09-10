@@ -32,7 +32,7 @@ internal static class Program
             return emergencyApp.Run();
         }
         if (args.Length != 0 && !(args.Length == 1 && args[0] is "--background" or "--uninstall-ui"))
-        { MessageBox.Show("不支持此参数。紧急管理命令请查阅 README。", "Bedtime Guard"); return 2; }
+        { MessageBox.Show("不支持此参数。紧急管理命令请查阅 README。", "Force Break"); return 2; }
         var background = args.Contains("--background");
         if (args.Length == 0 && NativeInstaller.IsInstalledExecutable(Environment.ProcessPath!) && EventWaitHandle.TryOpenExisting(@"Local\BedtimeGuard.ShowSettings", out var existing))
         { using (existing) existing.Set(); return 0; }

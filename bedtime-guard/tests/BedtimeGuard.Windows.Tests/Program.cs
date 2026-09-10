@@ -14,6 +14,12 @@ var count = 0;
 void Check(bool value, string name) { if (!value) throw new Exception(name); count++; Console.WriteLine("PASS " + name); }
 try
 {
+    using (var monitor = new InputActivityMonitor())
+    {
+        Check(monitor.Snapshot().Available, "both low-level hooks install on their message-loop thread");
+        monitor.Dispose();
+        Check(!monitor.Snapshot().Available, "disposing input monitor unregisters both hooks");
+    }
     using var key = Registry.CurrentUser.CreateSubKey(subkey, true);
     var now = DateTimeOffset.UtcNow;
     policy.Apply(sid, now.AddHours(1), now);

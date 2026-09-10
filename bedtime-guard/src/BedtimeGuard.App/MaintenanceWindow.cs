@@ -79,7 +79,7 @@ internal sealed class MaintenanceWindow : Window
 {
     public MaintenanceWindow(MaintenanceAction action, string sid, string directory, string? emergencyConfirmation = null)
     {
-        Title = "Bedtime Guard · " + MaintenanceLauncher.Label(action);
+        Title = "Force Break · " + MaintenanceLauncher.Label(action);
         Width = 540; Height = 300; ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = new Thickness(28) };
@@ -97,7 +97,7 @@ internal sealed class MaintenanceWindow : Window
             {
                 var overwrite = action == MaintenanceAction.Install && NativeInstaller.HasExistingInstallation(directory);
                 if (overwrite && MessageBox.Show(this,
-                    "发现已有安装或数据，是否覆盖安装？\n\n将更新程序并修复安装登记；保留计划、累计进度、已承诺安排与原受约束账号。已暂停的安装仍保持暂停。",
+                    "发现已有安装或数据，是否覆盖安装？\n\n将更新程序并修复安装登记。旧版 Bedtime Guard 的配置、进度和承诺会清空，使用 Force Break 默认配置。\n\n如果已是本版 Force Break，则保留现有配置、进度、承诺和暂停状态。",
                     "确认覆盖安装", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
                 { result.Text = "已取消覆盖，现有安装和数据未修改。"; code = 0; return; }
                 await Task.Run(() => NativeInstaller.Execute(action, sid, directory, Environment.ProcessPath!, emergencyConfirmation, overwrite));

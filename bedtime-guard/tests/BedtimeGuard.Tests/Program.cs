@@ -125,7 +125,7 @@ var tests = new (string Name, Action Run)[]
     })
 };
 
-tests = tests.Concat(BreakTests.Cases).ToArray();
+tests = tests.Concat(BreakTests.Cases).Concat(ForceBreakTests.Cases).ToArray();
 var failed = 0;
 foreach (var test in tests)
 {
@@ -135,7 +135,7 @@ foreach (var test in tests)
 Console.WriteLine($"{tests.Length - failed}/{tests.Length} passed");
 return failed == 0 ? 0 : 1;
 
-static Schedule Enabled() => new() { Enabled = true, TimeZoneId = "UTC" };
+static Schedule Enabled() => new() { Enabled = true, TimeZoneId = "UTC", Reminder = new(22, 0), Bedtime = new(23, 0), DisableTaskManager = false };
 static Planner New(Schedule schedule, int sample = 500000) => new(new PlannerState { Schedule = schedule }, () => sample);
 static DateTimeOffset At(int day, int hour, int minute, int second = 0) => new(2026, 9, day, hour, minute, second, TimeSpan.Zero);
 static void Equal<T>(T expected, T actual)

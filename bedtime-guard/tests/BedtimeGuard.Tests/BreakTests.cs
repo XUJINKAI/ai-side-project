@@ -3,19 +3,10 @@ using BedtimeGuard.Core;
 internal static class BreakTests
 {
     private static readonly DateTimeOffset Start = new(2026, 9, 10, 9, 0, 0, TimeSpan.Zero);
-    private static readonly BreakOptions Options = new() { Enabled = true };
+    private static readonly BreakOptions Options = new() { Enabled = true, WorkMinutes = 60 };
     public static (string Name, Action Run)[] Cases =>
     [
-        ("legacy hours migrate to minutes without changing the interval", () =>
-        {
-            var legacy = System.Text.Json.JsonSerializer.Deserialize<BreakOptions>("{\"WorkHours\":1.5}")!;
-            Equal(90d, legacy.WorkMinutes);
-            var json = System.Text.Json.JsonSerializer.Serialize(legacy);
-            Equal(false, json.Contains("WorkHours"));
-            Equal(true, json.Contains("WorkMinutes"));
-            (Options with { WorkMinutes = 11, ReminderMinutes = 0, CommitmentMinutes = 0 }).Validate();
-        }),
-        ("break defaults: 50 minute reminder, 60 minute lock, 70 minute release", () =>
+        ("60 minute work interval: 50 minute reminder, 60 minute lock, 70 minute release", () =>
         {
             var state = new BreakState();
             Equal(Phase.Open, Tick(state, 49, 49).Phase);
@@ -121,15 +112,6 @@ internal static class BreakTests
             Equal(Phase.Open, Tick(state, 26, 4, options).Phase);
             Equal(Phase.Open, Tick(state, 36, 10, options).Phase);
             Equal(Phase.Restricted, Tick(state, 37, 1, options).Phase);
-        }),
-        ("legacy short intervals extend future cycles without changing frozen deadlines", () =>
-        {
-            var frozen = new FrozenBreak(Start, Start.AddMinutes(1), Start.AddMinutes(6), false);
-            var state = new PlannerState { Version = 1, Schedule = new Schedule { Breaks = Options with { WorkMinutes = 6, CommitmentMinutes = 5, ReminderMinutes = 5 } },
-                Break = new BreakState { WorkSeconds = 60, Frozen = frozen } };
-            StateMigration.Upgrade(state);
-            Equal(16d, state.Schedule.Breaks.WorkMinutes); Equal(2, state.Version);
-            Equal(frozen, state.Break.Frozen); Equal(60d, state.Break.WorkSeconds);
         }),
         ("editing before commitment keeps accumulated work", () =>
         {

@@ -10,7 +10,7 @@ public sealed class Sessions(Installation installation)
 {
     private readonly Dictionary<int, Queue<DateTimeOffset>> attempts = [];
 
-    public bool IsTargetUnlocked()
+    public bool IsTargetUnlocked(int? sessionId = null)
     {
         if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out var list, out var count))
             throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -19,7 +19,7 @@ public sealed class Sessions(Installation installation)
             for (var i = 0; i < count; i++)
             {
                 var s = Marshal.PtrToStructure<WtsSession>(list + i * Marshal.SizeOf<WtsSession>());
-                if (s.Id == 0 || s.State != 0 || !WTSQueryUserToken(s.Id, out var token)) continue;
+                if (s.Id == 0 || (sessionId is not null && s.Id != sessionId) || s.State != 0 || !WTSQueryUserToken(s.Id, out var token)) continue;
                 try
                 {
                     using var identity = new WindowsIdentity(token);

@@ -1,9 +1,11 @@
+using System.IO;
 using BedtimeGuard.Core;
 using BedtimeGuard.Service;
 using BedtimeGuard.Windows;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Security.Principal;
+using System.Windows.Automation;
 
 // Run elevated on an expendable Windows host; the real locking policy stays disabled.
 if (!OperatingSystem.IsWindows() || args.Length != 1) return 2;
@@ -22,6 +24,13 @@ try
     while (!ui.HasExited && ui.MainWindowHandle == IntPtr.Zero && DateTime.UtcNow < deadline)
     { await Task.Delay(200); ui.Refresh(); }
     Check(!ui.HasExited && ui.MainWindowHandle != IntPtr.Zero, "first launch opens a GUI without installation or scripts");
+    var window = AutomationElement.FromHandle(ui.MainWindowHandle);
+    Check(window.Current.Name.Contains("Force Break"), "window displays new product name");
+    var tabs = window.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+    Check(tabs.Count == 4, "settings are divided into four tabs");
+    Check(tabs.Cast<AutomationElement>().Select(t => t.Current.Name).SequenceEqual(new[] { "当前状态", "早睡计划", "定时休息", "行为配置" }), "all four tabs have the intended labels");
+    foreach (AutomationElement tab in tabs)
+        ((SelectionItemPattern)tab.GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
     ui.Kill(); await ui.WaitForExitAsync(); ui.Dispose(); ui = null;
 
     NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable);
@@ -41,7 +50,7 @@ try
     NativeInstaller.Execute(MaintenanceAction.Repair, sid, directory, executable, NativeInstaller.EmergencyPause);
     Check(File.Exists(Paths.Paused), "native repair persists pause marker");
     var state = JsonStorage.Read<PlannerState>(Paths.State);
-    state.Schedule = state.Schedule with { Breaks = new BreakOptions { Enabled = true, WorkMinutes = 16, RestMinutes = 1, ReminderMinutes = 5, CommitmentMinutes = 5 } };
+    state.Schedule = state.Schedule with { DisableTaskManager = false, Behavior = new BehaviorOptions { DetectActivity = false, FullscreenOverlay = false, LockScreen = false }, Breaks = new BreakOptions { Enabled = true, WorkMinutes = 16, RestMinutes = 1, ReminderMinutes = 5, CommitmentMinutes = 5 } };
     state.Break.WorkSeconds = 660; // Exactly at commitment; never enter the lock period in this test.
     JsonStorage.Write(Paths.State, state);
     NativeInstaller.Execute(MaintenanceAction.Resume, sid, directory, executable);
@@ -78,15 +87,40 @@ try
     installed = false;
     Check(!Directory.Exists(directory) && !Directory.Exists(Paths.Data) && !Directory.Exists(NativeInstaller.Shortcuts), "native uninstall removes application, state and shortcuts");
     Check(!NativeInstaller.IsInstalled(), "native uninstall removes service registration");
+    Directory.CreateDirectory(Paths.Data);
+    File.WriteAllText(Paths.State, "{\"Version\":2,\"Schedule\":{\"Breaks\":{\"WorkHours\":0.1}}}");
+    NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable, overwrite: true);
+    installed = true;
+    reply = await Wire.Send(new Request("status"));
+    Check(reply.Ok && reply.Status?.Schedule.Breaks.WorkMinutes == 50 && reply.Status.Phase == Phase.Disabled &&
+        reply.Status.Schedule.Behavior is { DetectActivity: true, FullscreenOverlay: true, LockScreen: false }, "old settings are discarded and fresh defaults installed");
+    Check(!File.Exists(Path.Combine(Paths.Data, "state.before-install.json")), "discarded legacy configuration is not retained as a backup");
+    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable);
+    installed = false;
     // Reproduce the user's orphan-data case with no installed service or installation record.
     JsonStorage.Write(Paths.State, new PlannerState { Schedule = new Schedule { Breaks = new BreakOptions { WorkMinutes = 13, ReminderMinutes = 1, CommitmentMinutes = 2 } } });
     NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable, overwrite: true);
     installed = true;
     reply = await Wire.Send(new Request("status"));
     Check(reply.Ok && reply.Status?.Schedule.Breaks.WorkMinutes == 13, "confirmed overwrite repairs data-only installation and keeps settings");
-    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable);
+    var safeSchedule = reply.Status!.Schedule with { DisableTaskManager = false,
+        Behavior = new BehaviorOptions { DetectActivity = true, FullscreenOverlay = false, LockScreen = false } };
+    reply = await Wire.Send(new Request("save", safeSchedule));
+    Check(reply.Ok, "behavior options accepted over IPC");
+    reply = await Wire.Send(new Request("rest", RestMinutes: 3));
+    Check(!reply.Ok, "invalid manual duration rejected by service");
+    reply = await Wire.Send(new Request("rest", RestMinutes: 10));
+    Check(reply.Ok && reply.Status?.Phase == Phase.Restricted && reply.Status.IsBreak &&
+        reply.Status.EffectiveBehavior?.LockScreen == false, "manual rest works with periodic schedule disabled and snapshots behavior");
+    var manualRelease = reply.Status!.ReleaseAt;
+    reply = await Wire.Send(new Request("rest", RestMinutes: 5));
+    Check(!reply.Ok, "manual rest cannot shorten an existing rest");
+    NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable, overwrite: true);
+    reply = await Wire.Send(new Request("status"));
+    Check(reply.Ok && reply.Status?.ReleaseAt == manualRelease, "manual rest survives overwrite and service restart");
+    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall);
     installed = false;
-    Check(!NativeInstaller.IsInstalled(), "ordinary uninstall remains available outside commitment");
+    Check(!NativeInstaller.IsInstalled(), "emergency uninstall removes active manual rest");
     Console.WriteLine("PASS single EXE GUI launch, native install, IPC, recovery, resume and uninstall");
     return 0;
 }

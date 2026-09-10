@@ -19,15 +19,14 @@ internal sealed class TrayController : IDisposable
     private readonly DispatcherTimer timer;
     private readonly HwndSource source;
     private readonly List<ReminderWindow> reminders = new();
-    private readonly List<ReminderWindow> previews = new();
     private Status? status;
     private long lastSuccess;
-    private long lastLock;
+    private readonly WorkstationLock workstation = new();
+    private readonly RestOverlay overlay = new();
+    private InputActivityMonitor? activity;
     private bool busy;
-    private bool locked;
     private bool stopping;
     private string? noticeKey;
-    private string? overlayKey;
     private readonly bool agent;
 
     public TrayController(bool agent)
@@ -43,20 +42,20 @@ internal sealed class TrayController : IDisposable
         tray = new Forms.NotifyIcon
         {
             Icon = System.Drawing.SystemIcons.Shield,
-            Text = "Bedtime Guard · 正在连接服务",
+            Text = "Force Break · 正在连接服务",
             Visible = agent,
             ContextMenuStrip = new Forms.ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("设置与状态", null, (_, _) => ShowSettings());
-        tray.ContextMenuStrip.Items.Add("预览睡前提醒", null, (_, _) => Preview());
-        tray.DoubleClick += (_, _) => ShowSettings();
+        foreach (var minutes in new[] { 5, 10, 30 })
+            tray.ContextMenuStrip.Items.Add($"休息 {minutes} 分钟", null, async (_, _) => await StartRest(minutes));
+        tray.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) ShowSettings(); };
         timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += async (_, _) => await Tick();
         timer.Start();
         _ = Tick();
     }
 
-    public void ShowSettings() { settings.Show(); settings.WindowState = WindowState.Normal; settings.Activate(); }
+    public void ShowSettings() { settings.ShowStatusTab(); settings.Show(); settings.WindowState = WindowState.Normal; settings.Activate(); }
 
     private async Task Tick()
     {
@@ -64,28 +63,53 @@ internal sealed class TrayController : IDisposable
         busy = true;
         try
         {
-            var reply = await Wire.Send(new("status"));
+            var reply = await Wire.Send(activity is null ? new("status") : new("activity", Activity: activity.Snapshot()));
             if (stopping) return;
             if (!reply.Ok || reply.Status is null) throw new InvalidOperationException(reply.Error ?? "服务返回无效状态。");
             status = reply.Status;
             lastSuccess = Stopwatch.GetTimestamp();
             settings.UpdateStatus(status);
-            tray.Text = "Bedtime Guard · " + SettingsWindow.PhaseText(status.Phase, status.IsBreak);
+            tray.Text = Tooltip(status);
+            var manualAllowed = status.Phase != Phase.Restricted && status.Break?.Phase is not (Phase.Committed or Phase.Reminder or Phase.Restricted);
+            foreach (Forms.ToolStripItem item in tray.ContextMenuStrip!.Items) item.Enabled = manualAllowed;
+            if (agent && status.Schedule.Behavior.DetectActivity && activity is null) activity = new();
+            if (!status.Schedule.Behavior.DetectActivity && activity is not null) { activity.Dispose(); activity = null; }
             if (agent) RenderAndEnforce();
         }
         catch (Exception error)
         {
             if (stopping) return;
-            tray.Text = "Bedtime Guard · 服务未连接";
+            tray.Text = "Force Break · 服务未连接";
             settings.SetConnectionError("服务未连接：" + error.Message + "\n请安装或启动服务；此时无法保证限制生效。");
             // Fail open on stale authority. Never trap the user after repair/service failure.
             if (lastSuccess == 0 || Stopwatch.GetElapsedTime(lastSuccess) > TimeSpan.FromSeconds(5))
             {
                 status = null;
-                CloseReminders();
+                CloseReminders(); overlay.Dispose();
             }
         }
         finally { busy = false; }
+    }
+
+    private static string Tooltip(Status value)
+    {
+        if (value.Phase == Phase.Restricted && value.ReleaseAt is { } end)
+            return $"Force Break · 休息剩余 {Math.Max(1, Math.Ceiling((end - DateTimeOffset.UtcNow).TotalMinutes))} 分钟";
+        var seconds = value.LockAt is { } start ? Math.Max(0, (start - DateTimeOffset.UtcNow).TotalSeconds) : double.PositiveInfinity;
+        if (value.Break is { Phase: not Phase.Disabled } rest) seconds = Math.Min(seconds, rest.RemainingWorkSeconds);
+        return double.IsFinite(seconds) ? $"Force Break · 距休息约 {Math.Ceiling(seconds / 60)} 分钟{(value.WorkTimerPaused ? "（工作计时暂停）" : "")}" : "Force Break · 计划未启用";
+    }
+
+    private async Task StartRest(int minutes)
+    {
+        try
+        {
+            var reply = await Wire.Send(new("rest", RestMinutes: minutes));
+            if (!reply.Ok || reply.Status is null) throw new InvalidOperationException(reply.Error);
+            status = reply.Status; lastSuccess = Stopwatch.GetTimestamp();
+            settings.UpdateStatus(status); RenderAndEnforce();
+        }
+        catch (Exception error) { tray.ShowBalloonTip(10000, "无法开始休息", error.Message, Forms.ToolTipIcon.Info); }
     }
 
     private void RenderAndEnforce()
@@ -100,67 +124,41 @@ internal sealed class TrayController : IDisposable
             if (noticeKey != key)
             {
                 noticeKey = key;
-                tray.ShowBalloonTip(15000, status.IsBreak ? "该准备休息了" : "该准备睡觉了", $"{bedtime.ToLocalTime():HH:mm} 将锁定电脑，请保存工作。", Forms.ToolTipIcon.Info);
-                if (stage != "last")
-                {
-                    CloseReminders();
-                    var window = new ReminderWindow(bedtime, false, isBreak: status.IsBreak);
-                    reminders.Add(window);
-                    window.Show();
-                }
-            }
-            if (stage == "last" && overlayKey != key)
-            {
+                tray.ShowBalloonTip(15000, status.IsBreak ? "该准备休息了" : "该准备睡觉了", $"{bedtime.ToLocalTime():HH:mm} 开始休息，请保存工作。", Forms.ToolTipIcon.Info);
                 CloseReminders();
-                overlayKey = key;
-                foreach (var screen in Forms.Screen.AllScreens)
-                {
-                    var window = new ReminderWindow(bedtime, false, screen.Bounds, status.IsBreak);
-                    reminders.Add(window);
-                    window.Show();
-                }
+                var window = new ReminderWindow(bedtime, status.IsBreak);
+                reminders.Add(window); window.Show();
             }
         }
-        else
+        else CloseReminders();
+        var behavior = status.EffectiveBehavior ?? new BehaviorOptions();
+        if (status.Phase == Phase.Restricted && status.ReleaseAt is { } release && release > now)
         {
-            CloseReminders();
-            if (status.Phase == Phase.Restricted && status.ReleaseAt > now && !locked &&
-                (lastLock == 0 || Stopwatch.GetElapsedTime(lastLock) >= TimeSpan.FromSeconds(2)))
-            {
-                lastLock = Stopwatch.GetTimestamp();
-                if (!LockWorkStation()) settings.SetConnectionError($"系统锁屏请求失败：{Marshal.GetLastWin32Error()}");
-            }
+            if (behavior.FullscreenOverlay) overlay.ShowUntil(release, status.IsBreak ? "离开屏幕，休息一下。" : "晚安，明天再继续。");
+            else overlay.Dispose();
+            if (behavior.LockScreen) workstation.Enforce();
         }
+        else overlay.Dispose();
     }
 
     private IntPtr SessionMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (message == 0x02B1)
         {
-            if (wParam.ToInt32() == 7) locked = true;
+            if (wParam.ToInt32() == 7) workstation.IsLocked = true;
             if (wParam.ToInt32() is 8 or 5 or 1 or 3)
             {
-                locked = false;
-                lastLock = 0;
+                workstation.Reset();
                 _ = Tick();
             }
         }
         return IntPtr.Zero;
     }
 
-    private void Preview()
-    {
-        var window = new ReminderWindow(DateTimeOffset.Now.AddSeconds(30), true);
-        previews.Add(window);
-        window.Closed += (_, _) => previews.Remove(window);
-        window.Show();
-    }
-
     private void CloseReminders()
     {
         foreach (var window in reminders) window.Close();
         reminders.Clear();
-        overlayKey = null;
     }
 
     public void Dispose()
@@ -170,11 +168,10 @@ internal sealed class TrayController : IDisposable
         WTSUnRegisterSessionNotification(source.Handle);
         source.RemoveHook(SessionMessage);
         CloseReminders();
-        foreach (var window in previews.ToArray()) window.Close();
+        overlay.Dispose(); activity?.Dispose();
         tray.Dispose();
     }
 
-    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool LockWorkStation();
     [DllImport("wtsapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WTSRegisterSessionNotification(IntPtr hwnd, int flags);
     [DllImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WTSUnRegisterSessionNotification(IntPtr hwnd);
 }

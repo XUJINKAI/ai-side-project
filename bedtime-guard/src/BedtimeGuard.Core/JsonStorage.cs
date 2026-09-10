@@ -10,7 +10,6 @@ public static class JsonStorage
     {
         var value = JsonSerializer.Deserialize<T>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException($"Empty JSON: {path}");
-        if (value is PlannerState state) StateMigration.Upgrade(state);
         return value;
     }
 

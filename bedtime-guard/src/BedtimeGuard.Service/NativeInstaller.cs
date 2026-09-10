@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
+using System.Text.Json;
 
 namespace BedtimeGuard.Service;
 
@@ -18,7 +19,8 @@ public static class NativeInstaller
     public const string RecoveryTask = "BedtimeGuard-PolicyRecovery";
     private const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BedtimeGuard";
     public static string DefaultDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "BedtimeGuard");
-    public static string Shortcuts => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Bedtime Guard");
+    private static string LegacyShortcuts => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Bedtime Guard");
+    public static string Shortcuts => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Force Break");
 
     public const string EmergencyPause = "--i-confirm-i-am-breaking-my-commitment-and-want-to-emergency-pause-bedtime-guard-until-i-manually-enable-it-again";
     public const string EmergencyUninstall = "--i-confirm-i-am-breaking-my-commitment-and-want-to-permanently-uninstall-bedtime-guard-and-delete-all-my-saved-plans";
@@ -91,13 +93,13 @@ public static class NativeInstaller
             taskCreated = true;
             Directory.CreateDirectory(Shortcuts);
             shortcutCreated = true;
-            CreateShortcut("Bedtime Guard.lnk", executable, "");
+            CreateShortcut("Force Break.lnk", executable, "");
 
             using (var registration = Registry.LocalMachine.CreateSubKey(UninstallKey, true))
             {
                 registrationCreated = true;
-                registration.SetValue("DisplayName", "Bedtime Guard");
-                registration.SetValue("DisplayVersion", "0.3.0");
+                registration.SetValue("DisplayName", "Force Break");
+                registration.SetValue("DisplayVersion", "0.4.0");
                 registration.SetValue("InstallLocation", directory);
                 registration.SetValue("DisplayIcon", executable);
                 registration.SetValue("UninstallString", $"\"{executable}\" --uninstall-ui");
@@ -124,7 +126,7 @@ public static class NativeInstaller
     {
         using var key = Registry.LocalMachine.OpenSubKey(UninstallKey);
         return IsInstalled() || Directory.Exists(directory) || Directory.Exists(Paths.Data) ||
-            Directory.Exists(Shortcuts) || key is not null;
+            Directory.Exists(Shortcuts) || Directory.Exists(LegacyShortcuts) || key is not null;
     }
 
     private static void Overwrite(string sid, string directory, string source)
@@ -142,7 +144,7 @@ public static class NativeInstaller
         RejectReparseAncestors(Paths.Install);
         RejectReparseAncestors(Shortcuts);
         // Validate before stopping a working installation. Existing valid state is never reset.
-        if (File.Exists(Paths.State)) JsonStorage.Read<PlannerState>(Paths.State).Schedule.Validate();
+        if (File.Exists(Paths.State)) ReadStateForInstall(out _).Schedule.Validate();
         else if (IsInstalled() || File.Exists(Paths.Lease))
             throw new InvalidOperationException("现有状态文件缺失，不能自动清空承诺。请先通过紧急管理命令处理。");
         var paused = File.Exists(Paths.Paused);
@@ -152,11 +154,13 @@ public static class NativeInstaller
             CreateProtectedDirectory(Paths.Data, false);
             File.WriteAllText(Paths.Paused, DateTimeOffset.UtcNow.ToString("O"));
             new TaskManagerPolicy().Restore();
-            var state = File.Exists(Paths.State) ? JsonStorage.Read<PlannerState>(Paths.State) : new PlannerState();
-            if (state.Version != 2) throw new InvalidDataException("Unknown state version.");
+            var state = ReadStateForInstall(out var discardedOldState);
+            if (discardedOldState) paused = false;
+            if (state.Version != 3) throw new InvalidDataException("Unknown state version.");
             state.Schedule.Validate();
             // Keep the original JSON as an administrator-only recovery copy.
-            if (File.Exists(Paths.State)) File.Copy(Paths.State, Path.Combine(Paths.Data, "state.before-install.json"), true);
+            if (discardedOldState) File.Delete(Path.Combine(Paths.Data, "state.before-install.json"));
+            else if (File.Exists(Paths.State)) File.Copy(Paths.State, Path.Combine(Paths.Data, "state.before-install.json"), true);
             CreateProtectedDirectory(directory, true);
             ScheduledRecovery.Remove();
             StopUserProcesses(executable);
@@ -168,11 +172,11 @@ public static class NativeInstaller
             ServiceRecovery.Configure();
             ScheduledRecovery.Register(executable);
             Directory.CreateDirectory(Shortcuts);
-            File.Delete(Path.Combine(Shortcuts, "Bedtime Guard - Recovery.lnk"));
-            CreateShortcut("Bedtime Guard.lnk", executable, "");
+            RemoveLegacyShortcuts();
+            CreateShortcut("Force Break.lnk", executable, "");
             using var registration = Registry.LocalMachine.CreateSubKey(UninstallKey, true);
-            registration.SetValue("DisplayName", "Bedtime Guard");
-            registration.SetValue("DisplayVersion", "0.3.0");
+            registration.SetValue("DisplayName", "Force Break");
+            registration.SetValue("DisplayVersion", "0.4.0");
             registration.SetValue("InstallLocation", directory);
             registration.SetValue("DisplayIcon", executable);
             registration.SetValue("UninstallString", $"\"{executable}\" --uninstall-ui");
@@ -224,6 +228,7 @@ public static class NativeInstaller
         DeleteService();
         Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false);
         if (Directory.Exists(Shortcuts)) Directory.Delete(Shortcuts, true);
+        RemoveLegacyShortcuts();
         Directory.Delete(Paths.Data, true);
     }
 
@@ -240,7 +245,7 @@ public static class NativeInstaller
         try
         {
             var state = JsonStorage.Read<PlannerState>(Paths.State);
-            if (state.Version != 2) throw new InvalidDataException("Unknown state version.");
+            if (state.Version != 3) throw new InvalidDataException("Unknown state version.");
             var now = DateTimeOffset.UtcNow;
             var planner = new Planner(state, () => System.Security.Cryptography.RandomNumberGenerator.GetInt32(1_000_000));
             var night = planner.Tick(now);
@@ -326,6 +331,29 @@ public static class NativeInstaller
         directory.SetAccessControl(security);
     }
 
+    private static PlannerState ReadStateForInstall(out bool discardedOldState)
+    {
+        discardedOldState = false;
+        if (!File.Exists(Paths.State)) return new();
+        using var document = JsonDocument.Parse(File.ReadAllText(Paths.State));
+        if (document.RootElement.TryGetProperty("Version", out var version) && version.TryGetInt32(out var number) && number is 1 or 2)
+        {
+            // Old configurations are deliberately discarded, never migrated.
+            discardedOldState = true;
+            return new();
+        }
+        return JsonStorage.Read<PlannerState>(Paths.State);
+    }
+
+    private static void RemoveLegacyShortcuts()
+    {
+        RejectReparseAncestors(LegacyShortcuts);
+        if (!Directory.Exists(LegacyShortcuts)) return;
+        foreach (var name in new[] { "Bedtime Guard.lnk", "Bedtime Guard - Recovery.lnk" })
+            File.Delete(Path.Combine(LegacyShortcuts, name));
+        if (!Directory.EnumerateFileSystemEntries(LegacyShortcuts).Any()) Directory.Delete(LegacyShortcuts);
+    }
+
     private static void CreateShortcut(string name, string executable, string arguments)
     {
         dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell", true)!)!;
@@ -344,7 +372,7 @@ public static class NativeInstaller
         if (manager == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
         try
         {
-            var service = CreateServiceNative(manager, Paths.ServiceName, "Bedtime Guard", 0x12,
+            var service = CreateServiceNative(manager, Paths.ServiceName, "Force Break", 0x12,
                 0x10, 2, 1, $"\"{executable}\" --service", null, IntPtr.Zero, null, null, null);
             if (service == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
             CloseServiceHandle(service);
