@@ -1,4 +1,4 @@
-name: Bedtime Guard
+name: Force Break
 
 on:
   push:
