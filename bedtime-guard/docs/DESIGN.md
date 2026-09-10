@@ -42,7 +42,7 @@ Named Pipe 仅允许 SYSTEM 与选定 SID，拒绝 Network SID。收到请求后
 
 ## 安装边界
 
-Program Files 下的安装目录只允许 SYSTEM/Administrators 写入，普通 Users 读/执行；ProgramData 状态仅 SYSTEM/Administrators 可访问。安装目标和祖先不得为重解析点。记录原始用户 SID 后再 UAC 提权，不将另一个管理员账号误当成受约束用户。
+Program Files 直属的安装目录只允许 SYSTEM/Administrators 写入，普通 Users 读/执行；不接受经过其他可写中间目录的安装路径。ProgramData 状态仅 SYSTEM/Administrators 可访问。安装目标和祖先不得为重解析点。记录原始用户 SID 后再 UAC 提权，不将另一个管理员账号误当成受约束用户。
 
 安装不覆盖既有目录/状态，不自动启用日程。升级显式卸载后重装。卸载只结束真实路径匹配的 BedtimeGuard.App，不触碰其他进程。
 

@@ -28,10 +28,10 @@ Windows 常驻睡眠提醒与适度强制锁屏工具。C# / .NET 10 / WPF，后
 
 发布包自带 .NET 运行时，不需要额外安装 .NET，不使用 MSIX。默认安装到 `C:\Program Files\BedtimeGuard`，数据保存到 `C:\ProgramData\BedtimeGuard`。服务开机自动启动，并在选定账号的交互会话中启动托盘程序。关闭设置窗口继续常驻。
 
-可选择 Program Files 下的新目录：
+可选择 Program Files 直属的新目录（不接受可能由其他程序放宽权限的中间目录）：
 
 ```powershell
-.\scripts\Install.ps1 -InstallDir 'C:\Program Files\MyTools\BedtimeGuard'
+.\scripts\Install.ps1 -InstallDir 'C:\Program Files\MyBedtimeGuard'
 ```
 
 如果手动从已经提权的其他管理员账户安装，请使用 `-UserSid` 明确指定受约束账户。服务二进制所在目录必须受管理员保护，因此不支持把 SYSTEM 服务直接运行在下载目录或其他普通用户可写目录。安装器拒绝覆盖已有安装/状态，也拒绝路径中的符号链接或目录联接。

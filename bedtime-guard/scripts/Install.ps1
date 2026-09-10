@@ -13,8 +13,8 @@ $identity = [Security.Principal.SecurityIdentifier]::new($UserSid)
 $null = $identity.Translate([Security.Principal.NTAccount])
 $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
 $programFiles = [IO.Path]::GetFullPath($env:ProgramFiles).TrimEnd('\') + '\'
-if (-not $InstallDir.StartsWith($programFiles, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'InstallDir must be a new subdirectory of Program Files, to protect the SYSTEM service binaries.'
+if (-not [string]::Equals([IO.Path]::GetDirectoryName($InstallDir), $programFiles.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'InstallDir must be a new direct child of Program Files; an intermediate directory might be writable by ordinary users.'
 }
 Assert-NoReparseAncestor $InstallDir
 Assert-NoReparseAncestor $DataDir
