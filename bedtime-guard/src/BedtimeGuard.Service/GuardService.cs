@@ -41,7 +41,7 @@ public sealed class GuardService : ServiceBase
         {
             // Missing state is an error, not a silent reset of a frozen night.
             state = JsonStorage.Read<PlannerState>(Paths.State);
-            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
+            if (state.Version != 2) throw new InvalidDataException("Unknown state version.");
             state.Schedule.Validate();
             lock (gate) Refresh();
         }

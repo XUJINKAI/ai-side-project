@@ -6,8 +6,13 @@ public static class JsonStorage
 {
     public static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     public static T Clone<T>(T value) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value, Options), Options)!;
-    public static T Read<T>(string path) => JsonSerializer.Deserialize<T>(File.ReadAllText(path), Options)
-        ?? throw new InvalidDataException($"Empty JSON: {path}");
+    public static T Read<T>(string path)
+    {
+        var value = JsonSerializer.Deserialize<T>(File.ReadAllText(path), Options)
+            ?? throw new InvalidDataException($"Empty JSON: {path}");
+        if (value is PlannerState state) StateMigration.Upgrade(state);
+        return value;
+    }
 
     public static void Write<T>(string path, T value)
     {

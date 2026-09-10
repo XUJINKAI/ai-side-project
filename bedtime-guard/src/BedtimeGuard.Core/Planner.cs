@@ -6,7 +6,7 @@ public sealed class Planner(PlannerState state, Func<int> draw)
 
     public Status Tick(DateTimeOffset now)
     {
-        if (State.Version != 1 || State.Draws is null) throw new InvalidDataException("Invalid planner state.");
+        if (State.Version != 2 || State.Draws is null) throw new InvalidDataException("Invalid planner state.");
         State.Schedule.Validate();
         if (State.Frozen is { } frozen)
         {
@@ -73,10 +73,10 @@ public sealed class Planner(PlannerState state, Func<int> draw)
     {
         var s = State.Schedule;
         var zone = TimeZoneInfo.FindSystemTimeZoneById(s.TimeZoneId);
-        var rangeSeconds = s.JitterMinutes * 60;
-        var seconds = (long)GetDraw(date) * (2 * rangeSeconds + 1) / 1_000_000 - rangeSeconds;
+        var rangeMinutes = s.JitterMinutes;
+        var minutes = (long)GetDraw(date) * (2 * rangeMinutes + 1) / 1_000_000 - rangeMinutes;
         return new(date,
-            Resolve(date.ToDateTime(s.Commitment).AddSeconds(seconds), zone, false),
+            Resolve(date.ToDateTime(s.Commitment).AddMinutes(minutes), zone, false),
             Resolve(date.ToDateTime(s.Reminder), zone, false),
             Resolve(date.ToDateTime(s.Bedtime), zone, false),
             Resolve(date.AddDays(1).ToDateTime(s.Release), zone, true), s.DisableTaskManager);

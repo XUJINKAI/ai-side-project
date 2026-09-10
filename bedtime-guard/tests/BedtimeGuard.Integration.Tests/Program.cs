@@ -29,6 +29,9 @@ try
     Check(Directory.GetFiles(directory).Select(Path.GetFileName).SequenceEqual(new[] { "BedtimeGuard.exe" }), "installed application is also a single EXE");
     var reply = await Wire.Send(new Request("status"));
     Check(reply.Ok && reply.Status?.Phase == Phase.Disabled, "same EXE runs as real service with authenticated IPC");
+    var invalid = await Wire.Send(new Request("save", new Schedule { Breaks = new BreakOptions
+        { Enabled = true, WorkMinutes = 3, RestMinutes = 5, ReminderMinutes = 0, CommitmentMinutes = 0 } }));
+    Check(!invalid.Ok, "service rejects intervals with less than eleven uncommitted minutes");
     using (var registration = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BedtimeGuard"))
         Check(registration?.GetValue("UninstallString")?.ToString()?.Contains("--uninstall-ui") == true, "Windows uninstall entry opens the GUI");
     var duplicateRejected = false;
@@ -38,8 +41,8 @@ try
     NativeInstaller.Execute(MaintenanceAction.Repair, sid, directory, executable, NativeInstaller.EmergencyPause);
     Check(File.Exists(Paths.Paused), "native repair persists pause marker");
     var state = JsonStorage.Read<PlannerState>(Paths.State);
-    state.Schedule = state.Schedule with { Breaks = new BreakOptions { Enabled = true, WorkMinutes = 6, RestMinutes = 1, ReminderMinutes = 5, CommitmentMinutes = 5 } };
-    state.Break.WorkSeconds = 60; // Exactly at commitment; never enter the lock period in this test.
+    state.Schedule = state.Schedule with { Breaks = new BreakOptions { Enabled = true, WorkMinutes = 16, RestMinutes = 1, ReminderMinutes = 5, CommitmentMinutes = 5 } };
+    state.Break.WorkSeconds = 660; // Exactly at commitment; never enter the lock period in this test.
     JsonStorage.Write(Paths.State, state);
     NativeInstaller.Execute(MaintenanceAction.Resume, sid, directory, executable);
     reply = await Wire.Send(new Request("status"));
@@ -76,11 +79,11 @@ try
     Check(!Directory.Exists(directory) && !Directory.Exists(Paths.Data) && !Directory.Exists(NativeInstaller.Shortcuts), "native uninstall removes application, state and shortcuts");
     Check(!NativeInstaller.IsInstalled(), "native uninstall removes service registration");
     // Reproduce the user's orphan-data case with no installed service or installation record.
-    JsonStorage.Write(Paths.State, new PlannerState { Schedule = new Schedule { Breaks = new BreakOptions { WorkMinutes = 7, ReminderMinutes = 1, CommitmentMinutes = 2 } } });
+    JsonStorage.Write(Paths.State, new PlannerState { Schedule = new Schedule { Breaks = new BreakOptions { WorkMinutes = 13, ReminderMinutes = 1, CommitmentMinutes = 2 } } });
     NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable, overwrite: true);
     installed = true;
     reply = await Wire.Send(new Request("status"));
-    Check(reply.Ok && reply.Status?.Schedule.Breaks.WorkMinutes == 7, "confirmed overwrite repairs data-only installation and keeps settings");
+    Check(reply.Ok && reply.Status?.Schedule.Breaks.WorkMinutes == 13, "confirmed overwrite repairs data-only installation and keeps settings");
     NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable);
     installed = false;
     Check(!NativeInstaller.IsInstalled(), "ordinary uninstall remains available outside commitment");

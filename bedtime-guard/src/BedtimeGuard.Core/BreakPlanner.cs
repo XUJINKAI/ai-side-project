@@ -13,11 +13,11 @@ public sealed record BreakOptions
 
     public void Validate()
     {
-        if (!double.IsFinite(WorkMinutes) || WorkMinutes < 1 || WorkMinutes > 1440)
-            throw new ArgumentException("休息间隔必须为 1—1440 分钟，可使用小数。");
+        if (!double.IsFinite(WorkMinutes) || WorkMinutes < 11 || WorkMinutes > 1440 || WorkMinutes != Math.Truncate(WorkMinutes))
+            throw new ArgumentException("休息间隔必须为 11—1440 分钟，必须是整数。");
         if (RestMinutes is < 1 or > 180) throw new ArgumentException("休息时长必须为 1—180 分钟。");
-        if (ReminderMinutes < 0 || CommitmentMinutes < ReminderMinutes || CommitmentMinutes >= WorkMinutes)
-            throw new ArgumentException("承诺提前量必须不少于提醒提前量，且两者均需小于工作间隔。提前量可以为 0。");
+        if (ReminderMinutes < 0 || CommitmentMinutes < ReminderMinutes || WorkMinutes - CommitmentMinutes < 11)
+            throw new ArgumentException("提前量必须满足 0 ≤ 提醒 ≤ 承诺，且工作间隔 − 承诺提前量至少为 11 分钟。");
     }
 }
 

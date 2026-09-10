@@ -88,6 +88,7 @@ var tests = new (string Name, Action Run)[]
         Throws(() => (Enabled() with { Release = new(20, 0) }).Validate());
         Throws(() => (Enabled() with { Reminder = new(23, 0) }).Validate());
         Throws(() => (Enabled() with { Days = [] }).Validate());
+        Throws(() => (Enabled() with { Reminder = new(22, 0, 1) }).Validate());
     }),
     ("DST spring gap release moves to first valid instant", () =>
     {

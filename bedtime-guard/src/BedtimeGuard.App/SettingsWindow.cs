@@ -74,7 +74,7 @@ internal sealed class SettingsWindow : Window
         AddRow(panel, "休息时长（分钟）", restMinutes);
         AddRow(panel, "提前提醒（分钟）", breakReminder);
         AddRow(panel, "提前承诺（分钟）", breakCommitment);
-        panel.Children.Add(new TextBlock { Text = "累计解锁使用时间；锁屏、注销、睡眠期间暂停累计。进入承诺期后按固定时间执行，本轮不能取消或延期。承诺必须早于或等于提醒。夜间限制优先，结束后重新累计。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
+        panel.Children.Add(new TextBlock { Text = "累计解锁使用时间；锁屏、注销、睡眠期间暂停累计。进入承诺期后按固定时间执行，本轮不能取消或延期。全部使用整数分钟；提醒提前量不超过承诺提前量，工作间隔减去承诺提前量必须至少为 11 分钟。夜间限制优先，结束后重新累计。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
         panel.Children.Add(taskManager);
         panel.Children.Add(new TextBlock
         {
@@ -152,7 +152,7 @@ internal sealed class SettingsWindow : Window
                 Breaks = new BreakOptions
                 {
                     Enabled = breaksEnabled.IsChecked == true,
-                    WorkMinutes = double.Parse(workMinutes.Text, CultureInfo.InvariantCulture),
+                    WorkMinutes = int.Parse(workMinutes.Text, CultureInfo.InvariantCulture),
                     RestMinutes = int.Parse(restMinutes.Text, CultureInfo.InvariantCulture),
                     ReminderMinutes = int.Parse(breakReminder.Text, CultureInfo.InvariantCulture),
                     CommitmentMinutes = int.Parse(breakCommitment.Text, CultureInfo.InvariantCulture)

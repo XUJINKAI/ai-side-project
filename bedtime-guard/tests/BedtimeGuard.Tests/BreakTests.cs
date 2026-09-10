@@ -13,7 +13,7 @@ internal static class BreakTests
             var json = System.Text.Json.JsonSerializer.Serialize(legacy);
             Equal(false, json.Contains("WorkHours"));
             Equal(true, json.Contains("WorkMinutes"));
-            (Options with { WorkMinutes = 1, ReminderMinutes = 0, CommitmentMinutes = 0 }).Validate();
+            (Options with { WorkMinutes = 11, ReminderMinutes = 0, CommitmentMinutes = 0 }).Validate();
         }),
         ("break defaults: 50 minute reminder, 60 minute lock, 70 minute release", () =>
         {
@@ -90,12 +90,12 @@ internal static class BreakTests
             Equal(true, BreakPlanner.Combine(night, rest).IsBreak);
             Equal(false, BreakPlanner.Combine(night with { LockAt = Start.AddMinutes(5) }, rest).IsBreak);
         }),
-        ("zero lead permits immediate lock and fractional hour interval", () =>
+        ("zero lead at the minimum open interval", () =>
         {
-            var options = Options with { WorkMinutes = 6, ReminderMinutes = 0, CommitmentMinutes = 0, RestMinutes = 1 };
-            var state = new BreakState(); Equal(Phase.Open, Tick(state, 5, 5, options).Phase);
-            Equal(Phase.Restricted, Tick(state, 6, 1, options).Phase);
-            Equal(Phase.Open, Tick(state, 7, 0, options).Phase);
+            var options = Options with { WorkMinutes = 11, ReminderMinutes = 0, CommitmentMinutes = 0, RestMinutes = 1 };
+            var state = new BreakState(); Equal(Phase.Open, Tick(state, 10, 10, options).Phase);
+            Equal(Phase.Restricted, Tick(state, 11, 1, options).Phase);
+            Equal(Phase.Open, Tick(state, 12, 0, options).Phase);
         }),
         ("break validation rejects unsafe or inconsistent boundaries", () =>
         {
@@ -103,6 +103,33 @@ internal static class BreakTests
                 Options with { WorkMinutes = 0 }, Options with { RestMinutes = 0 }, Options with { RestMinutes = 181 },
                 Options with { ReminderMinutes = -1 }, Options with { CommitmentMinutes = 9 }, Options with { CommitmentMinutes = 60 } })
                 Throws(bad.Validate);
+        }),
+        ("open interval must exceed ten whole minutes", () =>
+        {
+            Throws(() => (Options with { WorkMinutes = 3, RestMinutes = 5, ReminderMinutes = 0, CommitmentMinutes = 0 }).Validate());
+            Throws(() => (Options with { WorkMinutes = 20 }).Validate());
+            Throws(() => (Options with { WorkMinutes = 21.5 }).Validate());
+            (Options with { WorkMinutes = 21 }).Validate();
+        }),
+        ("long rest cannot trigger another cycle until it finishes", () =>
+        {
+            var options = Options with { WorkMinutes = 11, RestMinutes = 15, ReminderMinutes = 0, CommitmentMinutes = 0 };
+            var state = new BreakState(); Tick(state, 11, 11, options);
+            var frozen = state.Frozen;
+            Equal(Phase.Restricted, Tick(state, 22, 11, options).Phase);
+            Equal(frozen, state.Frozen);
+            Equal(Phase.Open, Tick(state, 26, 4, options).Phase);
+            Equal(Phase.Open, Tick(state, 36, 10, options).Phase);
+            Equal(Phase.Restricted, Tick(state, 37, 1, options).Phase);
+        }),
+        ("legacy short intervals extend future cycles without changing frozen deadlines", () =>
+        {
+            var frozen = new FrozenBreak(Start, Start.AddMinutes(1), Start.AddMinutes(6), false);
+            var state = new PlannerState { Version = 1, Schedule = new Schedule { Breaks = Options with { WorkMinutes = 6, CommitmentMinutes = 5, ReminderMinutes = 5 } },
+                Break = new BreakState { WorkSeconds = 60, Frozen = frozen } };
+            StateMigration.Upgrade(state);
+            Equal(16d, state.Schedule.Breaks.WorkMinutes); Equal(2, state.Version);
+            Equal(frozen, state.Break.Frozen); Equal(60d, state.Break.WorkSeconds);
         }),
         ("editing before commitment keeps accumulated work", () =>
         {

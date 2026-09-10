@@ -18,6 +18,8 @@ public sealed record Schedule
     public void Validate()
     {
         Breaks.Validate();
+        if (new[] { Commitment, Reminder, Bedtime, Release }.Any(t => t.Ticks % TimeSpan.TicksPerMinute != 0))
+            throw new ArgumentException("计划时间最小单位为分钟，不能包含秒。");
         if (JitterMinutes is < 0 or > 120) throw new ArgumentException("随机范围必须为 0—120 分钟。");
         var earliest = Commitment.ToTimeSpan() - TimeSpan.FromMinutes(JitterMinutes);
         var latest = Commitment.ToTimeSpan() + TimeSpan.FromMinutes(JitterMinutes);
@@ -38,7 +40,7 @@ public sealed record Night(DateOnly Date, DateTimeOffset CommitAt, DateTimeOffse
 
 public sealed class PlannerState
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public Schedule Schedule { get; set; } = new();
     public Dictionary<DateOnly, int> Draws { get; set; } = [];
     public Night? Frozen { get; set; }

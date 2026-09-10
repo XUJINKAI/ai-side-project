@@ -153,7 +153,7 @@ public static class NativeInstaller
             File.WriteAllText(Paths.Paused, DateTimeOffset.UtcNow.ToString("O"));
             new TaskManagerPolicy().Restore();
             var state = File.Exists(Paths.State) ? JsonStorage.Read<PlannerState>(Paths.State) : new PlannerState();
-            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
+            if (state.Version != 2) throw new InvalidDataException("Unknown state version.");
             state.Schedule.Validate();
             // Keep the original JSON as an administrator-only recovery copy.
             if (File.Exists(Paths.State)) File.Copy(Paths.State, Path.Combine(Paths.Data, "state.before-install.json"), true);
@@ -240,13 +240,13 @@ public static class NativeInstaller
         try
         {
             var state = JsonStorage.Read<PlannerState>(Paths.State);
-            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
+            if (state.Version != 2) throw new InvalidDataException("Unknown state version.");
             var now = DateTimeOffset.UtcNow;
             var planner = new Planner(state, () => System.Security.Cryptography.RandomNumberGenerator.GetInt32(1_000_000));
             var night = planner.Tick(now);
             var rest = BreakPlanner.Tick(state.Break, state.Schedule.Breaks, now, TimeSpan.Zero,
                 night.Phase == Phase.Restricted, state.Schedule.DisableTaskManager);
-            JsonStorage.Write(Paths.State, state);
+            // Do not rewrite migrated state before restarting a possibly older service.
             if (BreakPlanner.Combine(night, rest).Phase is Phase.Committed or Phase.Reminder or Phase.Restricted)
                 throw new InvalidOperationException("已进入承诺期，当前安排结束前不能卸载。");
         }
