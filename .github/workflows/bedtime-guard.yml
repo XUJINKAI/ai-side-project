@@ -1,0 +1,71 @@
+name: Bedtime Guard
+
+on:
+  push:
+    branches: [master]
+    paths: ['bedtime-guard/**', '.github/workflows/bedtime-guard.yml', '.github/workflows/publish-build.yml', '.github/release/**']
+  pull_request:
+    paths: ['bedtime-guard/**', '.github/workflows/bedtime-guard.yml', '.github/workflows/publish-build.yml', '.github/release/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s .github/release -p 'test_*.py' -v
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/release/release.py plan bedtime-guard
+  windows:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: bedtime-guard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test and build single EXE without runtime
+        run: ./build.ps1 -Runtime win-x64
+      - name: Stage the requested download filename
+        run: |
+          New-Item -ItemType Directory -Force out/release | Out-Null
+          Copy-Item out/BedtimeGuard-win-x64/BedtimeGuard.exe out/release/bedtime-guard-win-x64.exe
+      - name: GUI launch and native installation lifecycle
+        run: dotnet run --project tests/BedtimeGuard.Integration.Tests -c Release -- "$PWD/out/release/bedtime-guard-win-x64.exe"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate build JSON
+        run: |
+          python ../.github/release/release.py info bedtime-guard out/release
+          if ($LASTEXITCODE -ne 0) { throw 'Build metadata failed.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bedtime-guard
+          path: bedtime-guard/out/release/*
+          if-no-files-found: error
+  publish:
+    needs: windows
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-build.yml
+    with:
+      project: bedtime-guard
+      artifact: release-bedtime-guard

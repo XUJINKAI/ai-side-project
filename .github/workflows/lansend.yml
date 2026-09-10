@@ -1,0 +1,65 @@
+name: LanSend
+on:
+  push:
+    branches: [master]
+    paths: ['lansend/**', '.github/workflows/lansend.yml', '.github/workflows/publish-build.yml', '.github/release/**']
+  pull_request:
+    paths: ['lansend/**', '.github/workflows/lansend.yml', '.github/workflows/publish-build.yml', '.github/release/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s .github/release -p 'test_*.py' -v
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/release/release.py plan lansend
+  build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: lansend/go.mod
+          cache-dependency-path: lansend/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test and build standalone executables
+        working-directory: lansend
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go vet ./...
+          go test ./...
+          mkdir -p out/release
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o out/release/lansend-win-x64.exe ./cmd/lansend
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o out/release/lansend-linux-amd64 ./cmd/lansend
+          ./out/release/lansend-linux-amd64 --version
+      - run: python .github/release/release.py info lansend lansend/out/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-lansend
+          path: lansend/out/release/*
+          if-no-files-found: error
+  publish:
+    needs: build
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-build.yml
+    with:
+      project: lansend
+      artifact: release-lansend

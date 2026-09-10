@@ -1,5 +1,8 @@
 # LanSend（局域箱）
 
+发布版下载：[Latest builds](https://github.com/XUJINKAI/ai-side-project/releases/tag/latest-build)。Windows 使用 `lansend-win-x64.exe`，Linux x86-64 使用无扩展名的 `lansend-linux-amd64`（下载后按需执行 `chmod +x lansend-linux-amd64`）。文件直接运行，不需要解压；`lansend-build.json` 同时记录两个平台的源码提交、构建时间和 SHA-256。主分支修改本项目后自动更新，其余项目附件保持不变。
+
+
 局域网内的轻量文件下载站、文件与文本上传中转站。
 
 ```sh

@@ -6,6 +6,10 @@
 
 ### 工具
 
+- #### [bedtime-guard](bedtime-guard/) (C# / Windows)
+
+随机承诺时间的睡眠提醒与强制锁屏工具，包含托盘界面、Windows 服务、可选任务管理器限制和管理员恢复。
+
 - #### lansend (go)
 
 局域网传输工具，通过浏览器上传和下载，支持文本预览和上传。
@@ -31,6 +35,20 @@
 C Type System, 为 C 的结构体定义类型，支持 JSON 序列化/反序列化。
 
 22 年未完成的想法，由 AI 完成。
+
+## 下载最新构建
+
+[Latest builds](https://github.com/XUJINKAI/ai-side-project/releases/tag/latest-build) 在发布配置合并到主分支、首次构建成功后自动建立。每个项目独立更新，未改动的项目保留上次产物。
+
+| 文件 | 内容 |
+| --- | --- |
+| `lansend-win-x64.exe` | LanSend Windows x64 |
+| `lansend-linux-amd64` | LanSend Linux x86-64，下载后按需添加执行权限 |
+| `bedtime-guard-win-x64.exe` | Bedtime Guard Windows x64，需要 .NET 10 Desktop Runtime |
+| `lansend-build.json` | 两个平台 LanSend 的构建来源与校验信息 |
+| `bedtime-guard-build.json` | Bedtime Guard 的构建来源与校验信息 |
+
+[发布流程与 JSON 字段说明](.github/release/README.md)。Release 附件为原始文件，不打包；PR 的 Actions artifact 只供预览。
 
 ## 约定
 
