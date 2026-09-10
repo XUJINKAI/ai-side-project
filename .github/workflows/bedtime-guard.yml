@@ -23,27 +23,18 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Parse scripts with Windows PowerShell 5.1
-        shell: powershell
-        run: |
-          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
-            $tokens = $null; $errors = $null
-            $null = [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
-            if ($errors) { throw ($errors | Out-String) }
-          }
-      - name: Test and build x64 bundle
+      - name: Test and build single EXE without runtime
         run: ./build.ps1 -Runtime win-x64
-      - name: Install, service IPC, repair, resume and uninstall
-        shell: powershell
-        run: ./scripts/Smoke-Test.ps1 -Bundle "$PWD/out/BedtimeGuard-win-x64"
+      - name: GUI launch and native installation lifecycle
+        run: dotnet run --project tests/BedtimeGuard.Integration.Tests -c Release -- "$PWD/out/BedtimeGuard-win-x64/BedtimeGuard.exe"
       - name: Checksum
         run: |
-          $hash = Get-FileHash out/BedtimeGuard-win-x64.zip -Algorithm SHA256
-          "$($hash.Hash.ToLowerInvariant())  BedtimeGuard-win-x64.zip" | Set-Content out/SHA256SUMS.txt
+          $hash = Get-FileHash out/BedtimeGuard-win-x64/BedtimeGuard.exe -Algorithm SHA256
+          "$($hash.Hash.ToLowerInvariant())  BedtimeGuard.exe" | Set-Content out/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: BedtimeGuard-win-x64
+          name: BedtimeGuard-win-x64-single-exe
           path: |
-            bedtime-guard/out/BedtimeGuard-win-x64.zip
+            bedtime-guard/out/BedtimeGuard-win-x64/BedtimeGuard.exe
             bedtime-guard/out/SHA256SUMS.txt
           if-no-files-found: error

@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace BedtimeGuard.Service;
 
@@ -20,6 +21,9 @@ public sealed class GuardService : ServiceBase
     private Status status = null!;
     private string? savedJson;
     private string? lastError;
+    private Sessions sessions = null!;
+    private long lastTick;
+    private long lastSave;
 
     public GuardService()
     {
@@ -31,7 +35,8 @@ public sealed class GuardService : ServiceBase
     protected override void OnStart(string[] args)
     {
         installation = Paths.ReadInstallation();
-        if (File.Exists(Paths.Paused)) throw new InvalidOperationException("管理员恢复模式已启用，请运行 Resume.ps1。");
+        sessions = new Sessions(installation);
+        if (File.Exists(Paths.Paused)) throw new InvalidOperationException("管理员恢复模式已启用，请在界面中点击重新启用。");
         try
         {
             // Missing state is an error, not a silent reset of a frozen night.
@@ -64,7 +69,6 @@ public sealed class GuardService : ServiceBase
 
     private async Task Clock(CancellationToken token)
     {
-        var sessions = new Sessions(installation);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         var supervision = 0;
         do
@@ -91,18 +95,37 @@ public sealed class GuardService : ServiceBase
         var candidate = JsonStorage.Clone(state);
         var planner = new Planner(candidate, () => RandomNumberGenerator.GetInt32(1_000_000));
         var now = DateTimeOffset.UtcNow;
-        var next = replacement is null ? planner.Tick(now) : planner.Update(replacement, now);
+        var stamp = Stopwatch.GetTimestamp();
+        var elapsed = lastTick == 0 ? TimeSpan.Zero : Stopwatch.GetElapsedTime(lastTick, stamp);
+        lastTick = stamp;
+        // Sleep/resume or a stalled process does not turn a wall-clock gap into worked time.
+        if (elapsed > TimeSpan.FromSeconds(5)) elapsed = TimeSpan.Zero;
+        var unlocked = false;
+        if (candidate.Schedule.Breaks.Enabled && candidate.Break.Frozen is null)
+            try { unlocked = sessions.IsTargetUnlocked(); } catch (Exception e) { ReportError(e.Message); }
+        var night = planner.Tick(now);
+        var rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now,
+            unlocked ? elapsed : TimeSpan.Zero, night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager);
+        if (replacement is not null)
+        {
+            night = planner.Update(replacement, now);
+            rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now, TimeSpan.Zero,
+                night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager);
+        }
+        var next = BreakPlanner.Combine(night, rest);
         var json = JsonSerializer.Serialize(candidate, JsonStorage.Options);
-        if (json != savedJson)
+        var urgent = replacement is not null || candidate.Frozen != state.Frozen || candidate.Break.Frozen != state.Break.Frozen;
+        if (json != savedJson && (savedJson is null || urgent || Stopwatch.GetElapsedTime(lastSave) >= TimeSpan.FromSeconds(15)))
         {
             JsonStorage.Write(Paths.State, candidate); // Commit before exposing or enforcing changes.
             savedJson = json;
+            lastSave = stamp;
         }
         state = candidate;
         status = next;
         try
         {
-            if (next.TaskManagerRequested && next.ReleaseAt is { } release)
+            if (next.TaskManagerRequested && next.PolicyUntil is { } release)
                 policy.Apply(installation.UserSid, release, now);
             else policy.Restore();
             status = status with { PolicyMessage = next.TaskManagerRequested ? "任务管理器限制已生效" : "任务管理器不受本工具限制" };
@@ -149,7 +172,7 @@ public sealed class GuardService : ServiceBase
                 lock (gate)
                 {
                     if (!authorized) response = new(false, Error: "用户身份不匹配。");
-                    else if (File.Exists(Paths.Paused)) response = new(false, Error: "管理员已暂停，请运行 Resume.ps1。");
+                    else if (File.Exists(Paths.Paused)) response = new(false, Error: "管理员已暂停，请在界面中点击重新启用。");
                     else
                     {
                         try
@@ -180,6 +203,7 @@ public sealed class GuardService : ServiceBase
         try { runner?.GetAwaiter().GetResult(); }
         finally
         {
+            try { if (state is not null) JsonStorage.Write(Paths.State, state); } catch (Exception e) { Paths.Log(e.Message); }
             try { policy.Restore(); } catch (Exception error) { Paths.Log(error.Message); }
             stop?.Dispose();
             Paths.Log("Service stopped; requested policy restoration.");

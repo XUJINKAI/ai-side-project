@@ -28,10 +28,12 @@ internal sealed class TrayController : IDisposable
     private bool stopping;
     private string? noticeKey;
     private string? overlayKey;
+    private readonly bool agent;
 
-    public TrayController()
+    public TrayController(bool agent)
     {
-        settings = new SettingsWindow();
+        this.agent = agent;
+        settings = new SettingsWindow(agent);
         settings.Saved += value => { status = value; lastSuccess = Stopwatch.GetTimestamp(); };
         var hwnd = new WindowInteropHelper(settings).EnsureHandle();
         source = HwndSource.FromHwnd(hwnd)!;
@@ -42,7 +44,7 @@ internal sealed class TrayController : IDisposable
         {
             Icon = System.Drawing.SystemIcons.Shield,
             Text = "Bedtime Guard · 正在连接服务",
-            Visible = true,
+            Visible = agent,
             ContextMenuStrip = new Forms.ContextMenuStrip()
         };
         tray.ContextMenuStrip.Items.Add("设置与状态", null, (_, _) => ShowSettings());
@@ -68,8 +70,8 @@ internal sealed class TrayController : IDisposable
             status = reply.Status;
             lastSuccess = Stopwatch.GetTimestamp();
             settings.UpdateStatus(status);
-            tray.Text = "Bedtime Guard · " + SettingsWindow.PhaseText(status.Phase);
-            RenderAndEnforce();
+            tray.Text = "Bedtime Guard · " + SettingsWindow.PhaseText(status.Phase, status.IsBreak);
+            if (agent) RenderAndEnforce();
         }
         catch (Exception error)
         {
@@ -98,11 +100,11 @@ internal sealed class TrayController : IDisposable
             if (noticeKey != key)
             {
                 noticeKey = key;
-                tray.ShowBalloonTip(15000, "该准备睡觉了", $"{bedtime.ToLocalTime():HH:mm} 将锁定电脑，请保存工作。", Forms.ToolTipIcon.Info);
+                tray.ShowBalloonTip(15000, status.IsBreak ? "该准备休息了" : "该准备睡觉了", $"{bedtime.ToLocalTime():HH:mm} 将锁定电脑，请保存工作。", Forms.ToolTipIcon.Info);
                 if (stage != "last")
                 {
                     CloseReminders();
-                    var window = new ReminderWindow(bedtime, false);
+                    var window = new ReminderWindow(bedtime, false, isBreak: status.IsBreak);
                     reminders.Add(window);
                     window.Show();
                 }
@@ -113,7 +115,7 @@ internal sealed class TrayController : IDisposable
                 overlayKey = key;
                 foreach (var screen in Forms.Screen.AllScreens)
                 {
-                    var window = new ReminderWindow(bedtime, false, screen.Bounds);
+                    var window = new ReminderWindow(bedtime, false, screen.Bounds, status.IsBreak);
                     reminders.Add(window);
                     window.Show();
                 }

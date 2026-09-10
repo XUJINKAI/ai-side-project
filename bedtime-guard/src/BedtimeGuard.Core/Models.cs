@@ -13,9 +13,11 @@ public sealed record Schedule
     public DayOfWeek[] Days { get; init; } = Enum.GetValues<DayOfWeek>();
     public string TimeZoneId { get; init; } = TimeZoneInfo.Local.Id;
     public bool DisableTaskManager { get; init; }
+    public BreakOptions Breaks { get; init; } = new();
 
     public void Validate()
     {
+        Breaks.Validate();
         if (JitterMinutes is < 0 or > 120) throw new ArgumentException("随机范围必须为 0—120 分钟。");
         var earliest = Commitment.ToTimeSpan() - TimeSpan.FromMinutes(JitterMinutes);
         var latest = Commitment.ToTimeSpan() + TimeSpan.FromMinutes(JitterMinutes);
@@ -41,12 +43,14 @@ public sealed class PlannerState
     public Dictionary<DateOnly, int> Draws { get; set; } = [];
     public Night? Frozen { get; set; }
     public DateOnly? CompletedThrough { get; set; }
+    public BreakState Break { get; set; } = new();
 }
 
 // Exact random commitment timestamps and random draws never leave the service.
 public sealed record Status(Schedule Schedule, Phase Phase, DateTimeOffset? ReminderAt,
     DateTimeOffset? LockAt, DateTimeOffset? ReleaseAt, bool TaskManagerRequested,
-    string? PolicyMessage = null, string? Error = null);
+    string? PolicyMessage = null, string? Error = null, BreakStatus? Break = null,
+    bool IsBreak = false, DateTimeOffset? PolicyUntil = null);
 
 public sealed record Request(string Command, Schedule? Schedule = null);
 public sealed record Response(bool Ok, Status? Status = null, string? Error = null);

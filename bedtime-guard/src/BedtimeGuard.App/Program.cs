@@ -2,24 +2,45 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Windows;
+using BedtimeGuard.Service;
 
 namespace BedtimeGuard.App;
 
 internal static class Program
 {
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
-        using var single = new Mutex(true, @"Local\BedtimeGuard.App", out var created);
-        if (!created)
+        if (args.SequenceEqual(new[] { "--service" })) return ServiceHost.Run(false);
+        if (args.SequenceEqual(new[] { "--recover-expired" })) return ServiceHost.Run(true);
+        if (args.Length == 5 && args[0] == "--maintenance" && args[4] == "--temporary-helper"
+            && Enum.TryParse<MaintenanceAction>(args[1], out var action) && Enum.IsDefined(action))
         {
-            MessageBox.Show("Bedtime Guard 已在运行，请双击任务栏托盘图标打开设置。", "Bedtime Guard");
-            return;
+            var maintenanceApp = new Application();
+            try { return maintenanceApp.Run(new MaintenanceWindow(action, args[2], args[3])); }
+            finally { MaintenanceLauncher.CleanupTemporaryHelper(); }
         }
+        var background = args.Contains("--background");
+        if (args.Length == 0 && EventWaitHandle.TryOpenExisting(@"Local\BedtimeGuard.ShowSettings", out var existing))
+        { using (existing) existing.Set(); return 0; }
+        var agent = background || NativeInstaller.IsInstalledExecutable(Environment.ProcessPath!);
+        var created = true;
+        using var single = agent ? new Mutex(true, @"Local\BedtimeGuard.Agent", out created) : null;
+        if (agent && !created && !args.Contains("--recovery") && !args.Contains("--uninstall-ui")) return 0;
+        // Recovery and uninstall entry points must still work while the agent is alive.
+        if (!created) agent = false;
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-        using var controller = new TrayController();
-        if (!args.Contains("--background")) controller.ShowSettings();
-        application.Run();
-        single.ReleaseMutex();
+        using var controller = new TrayController(agent);
+        using var show = agent ? new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\BedtimeGuard.ShowSettings") : null;
+        var waiter = show is null ? null : ThreadPool.RegisterWaitForSingleObject(show,
+            (_, _) => application.Dispatcher.BeginInvoke(controller.ShowSettings), null, Timeout.Infinite, false);
+        if (!background) controller.ShowSettings();
+        if (args.Contains("--recovery") || args.Contains("--uninstall-ui"))
+            application.Startup += async (_, _) => await MaintenanceLauncher.Run(
+                args.Contains("--uninstall-ui") ? MaintenanceAction.Uninstall : MaintenanceAction.Repair, NativeInstaller.DefaultDirectory);
+        var exit = application.Run();
+        waiter?.Unregister(null);
+        if (created) single?.ReleaseMutex();
+        return exit;
     }
 }

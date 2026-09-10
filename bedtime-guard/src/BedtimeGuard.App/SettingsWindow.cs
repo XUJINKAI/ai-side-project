@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using BedtimeGuard.Core;
 using BedtimeGuard.Windows;
+using BedtimeGuard.Service;
 
 namespace BedtimeGuard.App;
 
@@ -18,6 +19,8 @@ internal sealed class SettingsWindow : Window
     private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
     private readonly CheckBox enabled = new() { Content = "启用每周睡眠计划", Margin = new Thickness(0, 10, 0, 10) };
     private readonly CheckBox taskManager = new() { Content = "承诺期开始后临时禁用任务管理器（可选）", Margin = new Thickness(0, 12, 0, 6) };
+    private readonly CheckBox breaksEnabled = new() { Content = "启用定时强制休息", Margin = new Thickness(0, 18, 0, 10) };
+    private readonly TextBox workHours = new(), restMinutes = new(), breakReminder = new(), breakCommitment = new();
     private readonly TextBox commitment = new(), jitter = new(), reminder = new(), bedtime = new(), release = new();
     private readonly ComboBox zones = new() { MinWidth = 240, DisplayMemberPath = "DisplayName" };
     private readonly Dictionary<DayOfWeek, CheckBox> days = new();
@@ -26,15 +29,30 @@ internal sealed class SettingsWindow : Window
     private bool saving;
     public event Action<Status>? Saved;
 
-    public SettingsWindow()
+    public SettingsWindow(bool agent)
     {
-        Title = "Bedtime Guard · 睡眠计划";
+        Title = "Bedtime Guard · 睡眠与休息";
         Width = 660; Height = 820; MinWidth = 570; MinHeight = 500;
         Background = new SolidColorBrush(Color.FromRgb(246, 248, 252));
         FontFamily = new FontFamily("Microsoft YaHei UI"); FontSize = 14;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = new Thickness(28) };
         panel.Children.Add(new TextBlock { Text = "BEDTIME GUARD", Foreground = Brushes.SlateGray, Margin = new Thickness(0, 0, 0, 16) });
+        var installPath = new TextBox { Text = NativeInstaller.DefaultDirectory };
+        AddRow(panel, "安装位置", installPath);
+        var management = new WrapPanel { Margin = new Thickness(0, 8, 0, 18) };
+        foreach (var action in Enum.GetValues<MaintenanceAction>())
+        {
+            var button = new Button { Content = MaintenanceLauncher.Label(action), Padding = new Thickness(10, 7, 10, 7), Margin = new Thickness(0, 0, 8, 8) };
+            button.Click += async (_, _) =>
+            {
+                management.IsEnabled = false;
+                try { await MaintenanceLauncher.Run(action, installPath.Text); }
+                finally { management.IsEnabled = true; initialized = false; }
+            };
+            management.Children.Add(button);
+        }
+        panel.Children.Add(management);
         panel.Children.Add(stateText); panel.Children.Add(detail); panel.Children.Add(enabled);
         AddRow(panel, "承诺时间中心", commitment); AddRow(panel, "前后随机（分钟）", jitter);
         AddRow(panel, "首次提醒", reminder); AddRow(panel, "开始限制", bedtime); AddRow(panel, "次日解除", release);
@@ -49,6 +67,12 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(week);
         foreach (var zone in TimeZoneInfo.GetSystemTimeZones()) zones.Items.Add(zone);
         AddRow(panel, "计划时区", zones);
+        panel.Children.Add(breaksEnabled);
+        AddRow(panel, "工作间隔（小时）", workHours);
+        AddRow(panel, "休息时长（分钟）", restMinutes);
+        AddRow(panel, "提前提醒（分钟）", breakReminder);
+        AddRow(panel, "提前承诺（分钟）", breakCommitment);
+        panel.Children.Add(new TextBlock { Text = "累计解锁使用时间；锁屏、注销、睡眠期间暂停累计。进入承诺期后按固定时间执行，本轮不能取消或延期。承诺必须早于或等于提醒。夜间限制优先，结束后重新累计。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
         panel.Children.Add(taskManager);
         panel.Children.Add(new TextBlock
         {
@@ -59,11 +83,11 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(save); panel.Children.Add(feedback);
         panel.Children.Add(new TextBlock
         {
-            Text = "关闭窗口后继续在托盘运行。紧急恢复：从开始菜单运行“Bedtime Guard - Repair（恢复）”，需要管理员权限。",
+            Text = "安装后由后台服务常驻执行。安装、恢复、重新启用与卸载会请求管理员权限；日常配置不需要提权。紧急恢复也可从开始菜单的 Bedtime Guard - Recovery 打开。",
             TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 20, 0, 0)
         });
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        Closing += (_, e) => { e.Cancel = true; Hide(); };
+        Closing += (_, e) => { if (agent) { e.Cancel = true; Hide(); } else Application.Current.Shutdown(); };
         stateText.Text = "正在连接后台服务…";
     }
 
@@ -79,11 +103,14 @@ internal sealed class SettingsWindow : Window
 
     public void UpdateStatus(Status status)
     {
-        stateText.Text = PhaseText(status.Phase);
+        stateText.Text = PhaseText(status.Phase, status.IsBreak);
         var s = status.Schedule;
         var center = s.Commitment.ToTimeSpan();
         var range = $"{center - TimeSpan.FromMinutes(s.JitterMinutes):hh\\:mm}—{center + TimeSpan.FromMinutes(s.JitterMinutes):hh\\:mm}";
         detail.Text = $"设置的承诺范围：{range}\n当前安排：提醒 {Format(status.ReminderAt)} · 锁屏 {Format(status.LockAt)}\n解除 {Format(status.ReleaseAt)}\n{status.PolicyMessage}";
+        if (status.Break is { } rest)
+            detail.Text += rest.SuppressedByNight ? "\n定时休息：夜间限制期间暂停" :
+                $"\n定时休息：{PhaseText(rest.Phase, true)} · 距离休息约 {Math.Ceiling(rest.RemainingWorkSeconds / 60)} 分钟\n本轮休息 {Format(rest.LockAt)}—{Format(rest.ReleaseAt)}";
         save.IsEnabled = !saving;
         if (initialized) return;
         initialized = true;
@@ -91,6 +118,11 @@ internal sealed class SettingsWindow : Window
         commitment.Text = s.Commitment.ToString("HH:mm"); jitter.Text = s.JitterMinutes.ToString(CultureInfo.InvariantCulture);
         reminder.Text = s.Reminder.ToString("HH:mm"); bedtime.Text = s.Bedtime.ToString("HH:mm"); release.Text = s.Release.ToString("HH:mm");
         taskManager.IsChecked = s.DisableTaskManager;
+        breaksEnabled.IsChecked = s.Breaks.Enabled;
+        workHours.Text = s.Breaks.WorkHours.ToString(CultureInfo.InvariantCulture);
+        restMinutes.Text = s.Breaks.RestMinutes.ToString(CultureInfo.InvariantCulture);
+        breakReminder.Text = s.Breaks.ReminderMinutes.ToString(CultureInfo.InvariantCulture);
+        breakCommitment.Text = s.Breaks.CommitmentMinutes.ToString(CultureInfo.InvariantCulture);
         foreach (var item in days) item.Value.IsChecked = s.Days.Contains(item.Key);
         zones.SelectedItem = zones.Items.Cast<TimeZoneInfo>().FirstOrDefault(z => z.Id == s.TimeZoneId);
     }
@@ -109,14 +141,22 @@ internal sealed class SettingsWindow : Window
                 Reminder = Parse(reminder.Text), Bedtime = Parse(bedtime.Text), Release = Parse(release.Text),
                 Days = days.Where(p => p.Value.IsChecked == true).Select(p => p.Key).ToArray(),
                 TimeZoneId = (zones.SelectedItem as TimeZoneInfo)?.Id ?? throw new ArgumentException("请选择时区。"),
-                DisableTaskManager = taskManager.IsChecked == true
+                DisableTaskManager = taskManager.IsChecked == true,
+                Breaks = new BreakOptions
+                {
+                    Enabled = breaksEnabled.IsChecked == true,
+                    WorkHours = double.Parse(workHours.Text, CultureInfo.InvariantCulture),
+                    RestMinutes = int.Parse(restMinutes.Text, CultureInfo.InvariantCulture),
+                    ReminderMinutes = int.Parse(breakReminder.Text, CultureInfo.InvariantCulture),
+                    CommitmentMinutes = int.Parse(breakCommitment.Text, CultureInfo.InvariantCulture)
+                }
             };
             schedule.Validate();
             var reply = await Wire.Send(new("save", schedule));
             if (!reply.Ok || reply.Status is null) throw new InvalidOperationException(reply.Error);
             UpdateStatus(reply.Status); Saved?.Invoke(reply.Status);
             feedback.Text = reply.Status.Phase is Phase.Committed or Phase.Reminder or Phase.Restricted
-                ? "已保存后续计划。今晚已进入承诺期，原计划继续执行，不能取消或延期。" : "计划已保存。";
+                ? "已保存后续计划。已经承诺的睡眠或休息安排继续执行，不能取消或延期。" : "计划已保存。";
         }
         catch (Exception error) { feedback.Text = error.Message; }
         finally { saving = false; save.IsEnabled = true; }
@@ -124,7 +164,11 @@ internal sealed class SettingsWindow : Window
 
     private static TimeOnly Parse(string value) => TimeOnly.ParseExact(value.Trim(), "HH:mm", CultureInfo.InvariantCulture);
     private static string Format(DateTimeOffset? value) => value?.ToLocalTime().ToString("MM-dd HH:mm") ?? "—";
-    public static string PhaseText(Phase phase) => phase switch
+    public static string PhaseText(Phase phase, bool isBreak = false) => isBreak ? phase switch
+    {
+        Phase.Disabled => "定时休息未启用", Phase.Open => "正在累计工作时间", Phase.Committed => "本轮休息已承诺",
+        Phase.Reminder => "请保存工作，准备休息", Phase.Restricted => "休息时间，电脑使用受限", _ => "未知状态"
+    } : phase switch
     {
         Phase.Disabled => "计划未启用", Phase.Open => "可以调整计划", Phase.Committed => "今晚已承诺，计划固定",
         Phase.Reminder => "请开始收尾，准备睡觉", Phase.Restricted => "睡眠时间，电脑使用受限", _ => "未知状态"

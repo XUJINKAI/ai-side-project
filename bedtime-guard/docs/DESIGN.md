@@ -6,13 +6,14 @@
 
 Named Pipe 仅允许 SYSTEM 与选定 SID，拒绝 Network SID。收到请求后根据客户端令牌再次核验身份。每个连接最多一个请求，帧长上限 32 KiB，超时 5 秒，最多四个并发连接。只有 `status` 和 `save` 两个业务命令。原始随机样本和具体 CommitAt 不进入响应。
 
-服务在单个锁内复制当前状态、计算、写入文件，然后发布新状态；失败不把未持久化状态当成成功。服务 tick 每秒一次，界面也每秒请求状态。无全系统进程高频扫描；监督器每 5 秒只检查同名客户端进程及真实路径。
+服务在单个锁内复制当前状态、计算，配置与冻结快照先持久化再发布。未承诺的休息累计进度每 15 秒保存，正常停止时补存；崩溃最多损失约 15 秒进度。服务 tick 每秒一次，界面也每秒请求状态。无全系统进程高频扫描；监督器每 5 秒只检查同名单 EXE 进程及真实路径。
 
 `PlannerState` 保存：
 
 - `Schedule`：未来计划，包含星期、时区、时间、任务管理器选项。
 - `Draws`：按晚上日期保存的随机整数。编辑日程只映射已有样本，不重新抽取；不对客户端公开。
 - `Frozen`：已进入承诺期的当晚具体时间点与策略选项。
+- `Break`：未承诺工作累计秒数，以及可选的本轮固定提醒/锁屏/解除时间与策略快照。
 - `CompletedThrough`：已经完成的夜晚，不因时钟回拨而重新执行。
 
 每次保存前先按旧规则 tick，确保“保存恰好落在承诺截止时刻”不会绕过冻结。Frozen 存在时配置保存只影响以后，即使取消星期、关闭 Enabled、修改时区或策略选项都不会重写今晚。
@@ -44,7 +45,7 @@ Named Pipe 仅允许 SYSTEM 与选定 SID，拒绝 Network SID。收到请求后
 
 Program Files 直属的安装目录只允许 SYSTEM/Administrators 写入，普通 Users 读/执行；不接受经过其他可写中间目录的安装路径。ProgramData 状态仅 SYSTEM/Administrators 可访问。安装目标和祖先不得为重解析点。记录原始用户 SID 后再 UAC 提权，不将另一个管理员账号误当成受约束用户。
 
-安装不覆盖既有目录/状态，不自动启用日程。升级显式卸载后重装。卸载只结束真实路径匹配的 BedtimeGuard.App，不触碰其他进程。
+安装不覆盖既有目录/状态，不自动启用日程。升级显式卸载后重装。卸载只结束真实路径匹配的 BedtimeGuard.exe，不触碰其他进程。
 
 ## Win32 参考
 
@@ -52,3 +53,18 @@ Program Files 直属的安装目录只允许 SYSTEM/Administrators 写入，普�
 - [服务与用户会话分离](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services)
 - [WTSQueryUserToken](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtsqueryusertoken)
 - [DisableTaskMgr 用户策略](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-ctrlaltdel#disabletaskmgr)
+
+## 定时休息
+
+服务使用 Stopwatch 测量相邻刷新间隔，WTS SessionInfoEx 判断目标 SID 的活动会话是否解锁。超过 5 秒的刷新间隔视为睡眠/停顿，不算工作时间。承诺前以累计工作秒数判断阈值；跨过 d 分钟阈值时立即保存绝对时间快照。之后不因锁屏、配置修改或重新登录推迟本轮。c ≤ d，保证看到提醒时已经承诺。
+
+保存请求先按旧配置计算冻结，再计算新配置。夜间限制清零休息计时；其他情况下休息锁屏优先于夜间提醒，重叠提醒按最近锁屏选择。临时策略的租约覆盖两个已承诺计划所需的最晚解除时间；其中一个结束不会提前解除另一个的策略。
+
+## 单 EXE 与图形维护
+
+App 是唯一发布入口，引用服务库。普通启动进入 WPF 管理界面，`--service` 进入 ServiceBase，`--recover-expired` 执行策略恢复。Framework-dependent PublishSingleFile，不打包运行时；要求匹配架构的 .NET 10 Desktop Runtime。无脚本调用、外部命令或用户命令行步骤。
+
+安装按钮先记录原用户 SID，复制单 EXE 到临时目录，再通过 ShellExecute runas 请求 UAC；进程参数采用 ArgumentList。提权副本显示维护进度和错误，直接调用 SCM Win32、任务计划 COM、快捷方式 COM 与注册表 API。卸载副本位于安装目录外，可以结束路径完全匹配的托盘并删除安装 EXE。卸载登记 `--uninstall-ui` 同样打开图形确认。管理员维护入口属于显式安全出口，并非延期功能。
+
+- [WTS 会话解锁状态](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/ns-wtsapi32-wtsinfoex_level1_w)
+- [.NET 单文件发布](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview)

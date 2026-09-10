@@ -2,9 +2,12 @@
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
+    <AssemblyName>BedtimeGuard</AssemblyName>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
     <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>disable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../BedtimeGuard.Windows/BedtimeGuard.Windows.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../BedtimeGuard.Service/BedtimeGuard.Service.csproj" /></ItemGroup>
 </Project>

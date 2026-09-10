@@ -10,6 +10,35 @@ public sealed class Sessions(Installation installation)
 {
     private readonly Dictionary<int, Queue<DateTimeOffset>> attempts = [];
 
+    public bool IsTargetUnlocked()
+    {
+        if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out var list, out var count))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var s = Marshal.PtrToStructure<WtsSession>(list + i * Marshal.SizeOf<WtsSession>());
+                if (s.Id == 0 || s.State != 0 || !WTSQueryUserToken(s.Id, out var token)) continue;
+                try
+                {
+                    using var identity = new WindowsIdentity(token);
+                    if (identity.User?.Value != installation.UserSid) continue;
+                    if (!WTSQuerySessionInformation(IntPtr.Zero, s.Id, 25, out var info, out var bytes)) continue;
+                    try
+                    {
+                        // WTSINFOEXW: DWORD level + 8-byte-aligned union; level-1 flags at offset 16.
+                        if (bytes >= 20 && Marshal.ReadInt32(info, 0) == 1 && Marshal.ReadInt32(info, 16) == 1) return true;
+                    }
+                    finally { WTSFreeMemory(info); }
+                }
+                finally { CloseHandle(token); }
+            }
+            return false;
+        }
+        finally { WTSFreeMemory(list); }
+    }
+
     public void EnsureApp()
     {
         if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out var list, out var count))
@@ -86,6 +115,8 @@ public sealed class Sessions(Installation installation)
     [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
     [DllImport("wtsapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool WTSQueryUserToken(int session, out IntPtr token);
+    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSQuerySessionInformation(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
     [DllImport("userenv.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateEnvironmentBlock(out IntPtr environment, IntPtr token, [MarshalAs(UnmanagedType.Bool)] bool inherit);
     [DllImport("userenv.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyEnvironmentBlock(IntPtr environment);
