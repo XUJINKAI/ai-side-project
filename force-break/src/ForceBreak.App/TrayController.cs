@@ -51,10 +51,11 @@ internal sealed class TrayController : IDisposable
         foreach (var minutes in new[] { 5, 10, 30, 60, 120 })
             restItems.Add(tray.ContextMenuStrip.Items.Add($"休息 {minutes} 分钟", null, async (_, _) => await StartRest(new("rest", RestMinutes: minutes))));
         tomorrowItem = tray.ContextMenuStrip.Items.Add("直到明天 6:00", null, async (_, _) => await StartRest(new("rest-tomorrow")));
+        tomorrowItem.Visible = false;
         restItems.Add(tomorrowItem);
         tray.ContextMenuStrip.Items.Add(new Forms.ToolStripSeparator());
         tray.ContextMenuStrip.Items.Add("手动开启遮罩", null, (_, _) => overlay.OpenManual());
-        tray.ContextMenuStrip.Opening += (_, _) => tomorrowItem.Text = $"直到明天 {(status?.Schedule.Release ?? new TimeOnly(6, 0)):H:mm}";
+        tray.ContextMenuStrip.Opening += (_, _) => UpdateTomorrowItem();
         tray.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) ShowSettings(); };
         timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += async (_, _) => await Tick();
@@ -66,6 +67,7 @@ internal sealed class TrayController : IDisposable
 
     private async Task Tick()
     {
+        UpdateTomorrowItem();
         if (busy || stopping) return;
         busy = true;
         try
@@ -80,7 +82,7 @@ internal sealed class TrayController : IDisposable
             tray.Text = Tooltip(status);
             var manualAllowed = status.Phase != Phase.Restricted && status.Break?.Phase is not (Phase.Committed or Phase.Reminder or Phase.Restricted);
             foreach (var item in restItems) item.Enabled = manualAllowed;
-            tomorrowItem.Text = $"直到明天 {status.Schedule.Release:H:mm}";
+            UpdateTomorrowItem();
             if (agent && status.Schedule.Behavior.DetectActivity && activity is null) activity = new();
             if (!status.Schedule.Behavior.DetectActivity && activity is not null) { activity.Dispose(); activity = null; }
             if (agent) RenderAndEnforce();
@@ -98,6 +100,15 @@ internal sealed class TrayController : IDisposable
             }
         }
         finally { busy = false; }
+    }
+
+    internal static bool IsTomorrowRestVisible(DateTimeOffset now, Schedule? schedule) =>
+        schedule is not null && TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(schedule.TimeZoneId)).Hour >= 18;
+
+    private void UpdateTomorrowItem()
+    {
+        tomorrowItem.Text = $"直到明天 {(status?.Schedule.Release ?? new TimeOnly(6, 0)):H:mm}";
+        tomorrowItem.Visible = IsTomorrowRestVisible(DateTimeOffset.UtcNow, status?.Schedule);
     }
 
     private static string Tooltip(Status value)

@@ -20,6 +20,10 @@ internal sealed class RestOverlay : IDisposable
     private readonly OverlaySession session = new();
     private readonly OverlayNotes notes;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private readonly DispatcherTimer presenceTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly VirtualDesktopMonitor desktop = new();
+    private readonly Func<IntPtr, bool?> isOnCurrentDesktop;
+    private OverlayWindow? activeWindow;
     private string? layout;
     private string title = "休息一下，记下想法。";
     private string? saveError;
@@ -27,13 +31,16 @@ internal sealed class RestOverlay : IDisposable
     private bool loadFailed;
     public bool IsVisible => session.Mode != OverlayMode.Closed;
 
-    public RestOverlay(string? notesPath = null)
+    public RestOverlay(string? notesPath = null, Func<IntPtr, bool?>? isOnCurrentDesktop = null)
     {
+        this.isOnCurrentDesktop = isOnCurrentDesktop ?? desktop.IsOnCurrentDesktop;
         notes = new(notesPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ForceBreak", "overlay-notes.txt"));
         try { notes.Load(); }
         catch (Exception error) { loadFailed = true; saveError = "笔记读取失败，暂不允许编辑：" + error.Message; }
         timer.Tick += (_, _) => { if (dirty) Save(); Refresh(); };
         timer.Start();
+        presenceTimer.Tick += (_, _) => RefreshPresence();
+        presenceTimer.Start();
     }
     public void ShowUntil(DateTimeOffset deadline, string heading)
     { title = heading; session.Enforce(deadline, DateTimeOffset.UtcNow); Refresh(); }
@@ -45,21 +52,30 @@ internal sealed class RestOverlay : IDisposable
     }
     // Restriction ends, but notes remain visible until the user closes the overlay.
     public void Release() { session.Release(); Refresh(); }
-    private void Refresh()
+    internal void RefreshPresence() => Refresh(enforcePresence: true);
+    private void Refresh(bool enforcePresence = false)
     {
         session.Advance(DateTimeOffset.UtcNow);
         if (!IsVisible) return;
         var screens = Forms.Screen.AllScreens;
         var nextLayout = string.Join(";", screens.Select(s => s.Bounds.ToString()));
-        if (nextLayout != layout)
+        // Topmost alone cannot reveal a window hidden on another virtual desktop.
+        // Create replacement HWNDs on the current desktop instead of activating the old desktop.
+        var rebuild = nextLayout != layout || (enforcePresence && windows.Any(w => isOnCurrentDesktop(new WindowInteropHelper(w).Handle) == false));
+        if (rebuild)
         {
+            var selections = windows.Select(w => w.CaptureEditor()).ToArray();
+            var activeIndex = Math.Max(0, windows.IndexOf(activeWindow!));
             CloseWindows(); layout = nextLayout;
             foreach (var screen in screens)
             {
                 var window = new OverlayWindow(screen.Bounds, Edit, RequestClose);
                 windows.Add(window);
+                window.Activated += (_, _) => activeWindow = window;
                 window.SetText(notes.Text); window.Show();
+                if (windows.Count <= selections.Length) window.RestoreEditor(selections[windows.Count - 1]);
             }
+            activeWindow = windows.ElementAtOrDefault(activeIndex) ?? windows.FirstOrDefault();
         }
         var caption = session.Mode switch
         {
@@ -70,6 +86,12 @@ internal sealed class RestOverlay : IDisposable
         foreach (var window in windows)
             window.Update(title, caption, session.CanClose, loadFailed,
                 saveError ?? (dirty ? "正在保存…" : "笔记自动保存在本机"));
+        if (enforcePresence || rebuild)
+        {
+            foreach (var window in windows) window.CoverScreen();
+            // Activate only one display, retaining the user's notebook focus on other displays.
+            (activeWindow ?? windows.FirstOrDefault())?.Activate();
+        }
     }
     private void Edit(OverlayWindow source, string text)
     {
@@ -89,9 +111,9 @@ internal sealed class RestOverlay : IDisposable
         if (session.TryClose(DateTimeOffset.UtcNow)) CloseWindows();
     }
     private void CloseWindows()
-    { foreach (var window in windows) window.Dismiss(); windows.Clear(); layout = null; }
+    { foreach (var window in windows) window.Dismiss(); windows.Clear(); activeWindow = null; layout = null; }
     public void Dispose()
-    { timer.Stop(); Save(); CloseWindows(); }
+    { timer.Stop(); presenceTimer.Stop(); Save(); CloseWindows(); desktop.Dispose(); }
 
     private sealed class OverlayWindow : Window
     {
@@ -101,7 +123,7 @@ internal sealed class RestOverlay : IDisposable
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MinHeight = 100, Height = 200, FontSize = 16, Padding = new Thickness(0, 12, 0, 0),
             Background = Brushes.Transparent, Foreground = new SolidColorBrush(Color.FromRgb(224, 232, 243)), BorderThickness = new Thickness(0), CaretBrush = Brushes.White };
         private readonly TextBlock saveStatus = new() { FontSize = 12, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 10) };
-        private readonly Button close = new() { Content = "关闭遮罩", Padding = new Thickness(24, 10, 24, 10), HorizontalAlignment = HorizontalAlignment.Left };
+        private readonly Button close = new() { Content = "关闭", Padding = new Thickness(24, 10, 24, 10), HorizontalAlignment = HorizontalAlignment.Left };
         private readonly System.Drawing.Rectangle bounds;
         private bool dismissing;
         private bool syncing;
@@ -111,7 +133,7 @@ internal sealed class RestOverlay : IDisposable
             Title = "Force Break · 笔记遮罩";
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            ShowInTaskbar = false; Topmost = true;
+            ShowInTaskbar = false; ShowActivated = false; Topmost = true;
             Background = new SolidColorBrush(Color.FromRgb(19, 28, 46)); Foreground = Brushes.White;
             var panel = new Grid { Margin = new Thickness(64), MaxWidth = 1100, VerticalAlignment = VerticalAlignment.Center };
             panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
@@ -177,17 +199,26 @@ internal sealed class RestOverlay : IDisposable
             try { editor.Text = text; editor.CaretIndex = Math.Min(caret, text.Length); }
             finally { syncing = false; }
         }
+        public (int Start, int Length, double Scroll, bool Focused) CaptureEditor() =>
+            (editor.SelectionStart, editor.SelectionLength, editor.VerticalOffset, System.Windows.Input.FocusManager.GetFocusedElement(this) == editor);
+        public void RestoreEditor((int Start, int Length, double Scroll, bool Focused) state)
+        {
+            editor.Select(state.Start, state.Length);
+            editor.ScrollToVerticalOffset(state.Scroll);
+            if (state.Focused) System.Windows.Input.FocusManager.SetFocusedElement(this, editor);
+        }
         public void Update(string title, string caption, bool canClose, bool readOnly, string message)
         {
             heading.Text = title; remaining.Text = caption;
             remaining.FontSize = caption.StartsWith("剩余 ", StringComparison.Ordinal) ? Math.Clamp(ActualWidth / 25, 28, 56) : 28;
             close.Visibility = canClose ? Visibility.Visible : Visibility.Collapsed;
             editor.IsReadOnly = readOnly; saveStatus.Text = message;
-            if (IsLoaded) CoverScreen();
         }
-        private void CoverScreen()
+        public void CoverScreen()
         {
-            if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false; Topmost = true;
+            if (WindowState != WindowState.Normal) WindowState = WindowState.Normal;
             SetWindowPos(new WindowInteropHelper(this).Handle, new IntPtr(-1), bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x0010 | 0x0040);
         }
         public void Dismiss() { dismissing = true; Close(); }
