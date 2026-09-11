@@ -4,6 +4,7 @@ using System.Windows.Media.Imaging;
 using System.Windows;
 using System.Windows.Controls;
 using ForceBreak.App;
+using ForceBreak.Core;
 
 internal static class Program
 {
@@ -17,6 +18,7 @@ internal static class Program
         {
             try
             {
+                CheckTomorrowMenu();
                 using (var overlay = new RestOverlay(path))
                 {
                     overlay.OpenManual();
@@ -49,11 +51,59 @@ internal static class Program
                     reopened.OpenManual();
                     Check(Find<TextBox>((Grid)app.Windows.Cast<Window>().First().Content).Single().Text.Contains("连续保存"), "new overlay instance reloads saved notes");
                 }
+                CheckPresence(app, path);
             }
             catch (Exception error) { Console.Error.WriteLine(error); result = 1; }
             finally { if (Directory.Exists(Path.GetDirectoryName(path))) Directory.Delete(Path.GetDirectoryName(path)!, true); app.Shutdown(); }
         };
         app.Run(); return result;
+    }
+    private static void CheckTomorrowMenu()
+    {
+        var schedule = new Schedule { TimeZoneId = "China Standard Time" };
+        var evening = new DateTimeOffset(2026, 9, 11, 18, 0, 0, TimeSpan.FromHours(8));
+        Check(!TrayController.IsTomorrowRestVisible(evening.AddTicks(-1), schedule), "tomorrow menu hidden before 18:00");
+        Check(TrayController.IsTomorrowRestVisible(evening.ToUniversalTime(), schedule), "tomorrow menu appears at 18:00 in schedule timezone");
+        Check(TrayController.IsTomorrowRestVisible(evening.AddHours(6).AddTicks(-1), schedule), "tomorrow menu remains visible before midnight");
+        Check(!TrayController.IsTomorrowRestVisible(evening.AddHours(6), schedule), "tomorrow menu disappears at midnight");
+        Check(!TrayController.IsTomorrowRestVisible(evening, null), "tomorrow menu hidden before schedule is known");
+    }
+    private static void CheckPresence(Application app, string path)
+    {
+        bool? currentDesktop = true;
+        using var overlay = new RestOverlay(path, _ => currentDesktop);
+        overlay.ShowUntil(DateTimeOffset.UtcNow.AddMinutes(1), "保持休息");
+        var original = app.Windows.Cast<Window>().ToArray();
+        var editor = Find<TextBox>((Grid)original[0].Content).Single();
+        editor.Text = "切换桌面仍保留未保存的笔记";
+        editor.Select(2, 4);
+        original[0].Topmost = false;
+        original[0].WindowState = WindowState.Minimized;
+        overlay.RefreshPresence();
+        Check(original[0].Topmost && original[0].WindowState == WindowState.Normal, "presence restores topmost and minimized windows");
+        Check(editor.SelectionStart == 2 && editor.SelectionLength == 4, "ordinary refresh preserves selection");
+
+        currentDesktop = false;
+        overlay.RefreshPresence();
+        var replacement = app.Windows.Cast<Window>().ToArray();
+        Check(replacement.Length == original.Length && original.All(w => !w.IsVisible), "desktop change replaces all display windows");
+        Check(replacement.All(w => !original.Contains(w)), "desktop change creates new windows");
+        var restored = Find<TextBox>((Grid)replacement[0].Content).Single();
+        Check(restored.Text == editor.Text && restored.SelectionStart == 2 && restored.SelectionLength == 4, "desktop change preserves unsaved notes and selection");
+        Check(replacement.All(w => Find<Button>((Grid)w.Content).Single().Visibility == Visibility.Collapsed), "desktop change cannot unlock restriction");
+
+        currentDesktop = true;
+        overlay.RefreshPresence();
+        Check(app.Windows.Cast<Window>().SequenceEqual(replacement), "current desktop does not recreate windows");
+        currentDesktop = null;
+        overlay.RefreshPresence();
+        Check(app.Windows.Cast<Window>().SequenceEqual(replacement), "unavailable desktop API does not recreate windows repeatedly");
+        overlay.ShowUntil(DateTimeOffset.UtcNow.AddSeconds(-1), "结束");
+        var close = Find<Button>((Grid)replacement[0].Content).Single();
+        Check(Equals(close.Content, "关闭"), "close button uses plain language");
+        close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        overlay.RefreshPresence();
+        Check(!overlay.IsVisible && app.Windows.Count == 0, "presence timer cannot reopen a closed overlay");
     }
     private static void Capture(Window window, int width, int height, string name)
     {
