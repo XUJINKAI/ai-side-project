@@ -153,7 +153,8 @@ public static class NativeInstaller
             CreateProtectedDirectory(directory, true);
             ScheduledRecovery.Remove();
             StopUserProcesses(executable);
-            File.Copy(source, executable, true);
+            RetryFileOperation(() => File.Copy(source, executable, true),
+                "旧程序仍被占用，无法完成覆盖安装。请关闭 Force Break 后重试。");
             JsonStorage.Write(Paths.State, state);
             JsonStorage.Write(Paths.Install, new Installation(sid, executable));
             DeleteService();
@@ -224,7 +225,10 @@ public static class NativeInstaller
         if (File.Exists(Paths.Lease)) throw new InvalidOperationException("策略恢复尚未完成，请让目标用户登录后重试。");
         ScheduledRecovery.Remove();
         StopUserProcesses(installation.AppPath);
-        if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        RetryFileOperation(() =>
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }, "程序文件仍被占用，无法完成卸载。请关闭 Force Break 后重试。");
         DeleteService();
         Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false);
         if (Directory.Exists(Shortcuts)) Directory.Delete(Shortcuts, true);
@@ -269,11 +273,25 @@ public static class NativeInstaller
                 {
                     if (process.Id != Environment.ProcessId && string.Equals(process.MainModule?.FileName, executable, StringComparison.OrdinalIgnoreCase))
                     {
-                        process.Kill();
+                        process.Kill(true);
                         if (!process.WaitForExit(10000)) throw new IOException("界面进程未退出，请稍后重试卸载。");
                     }
                 }
                 catch (InvalidOperationException) { }
+            }
+        }
+    }
+
+    private static void RetryFileOperation(Action operation, string failureMessage)
+    {
+        const int attempts = 41; // Initial attempt plus ten seconds for Windows to release image/scanner handles.
+        for (var attempt = 0; ; attempt++)
+        {
+            try { operation(); return; }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == attempts - 1) throw new IOException(failureMessage, error);
+                Thread.Sleep(250);
             }
         }
     }
