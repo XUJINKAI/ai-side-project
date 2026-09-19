@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
+using System.Text.Json;
 
 namespace ForceBreak.Service;
 
@@ -17,6 +18,7 @@ public static class NativeInstaller
 {
     public const string RecoveryTask = "ForceBreak-PolicyRecovery";
     private const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ForceBreak";
+    private const string ResetMessage = "检测到 Force Break 配置格式已经变化或配置文件损坏。程序已恢复默认设置，早睡计划和定时休息均已关闭，请重新检查所有设置并保存。";
     public static string DefaultDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ForceBreak");
     public static string Shortcuts => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Force Break");
 
@@ -39,7 +41,6 @@ public static class NativeInstaller
     public static void Execute(MaintenanceAction action, string userSid, string installDirectory, string sourceExe, string? emergencyConfirmation = null, bool overwrite = false)
     {
         Paths.RequireAdministrator();
-        // One machine-wide installation transaction; users cannot mutate this admin-owned mutex.
         using var transaction = new Mutex(false, @"Global\ForceBreak.Maintenance");
         bool acquired;
         try { acquired = transaction.WaitOne(0); } catch (AbandonedMutexException) { acquired = true; }
@@ -107,7 +108,6 @@ public static class NativeInstaller
         }
         catch
         {
-            // Roll back only resources created by this transaction. Keep recovery resources on failure.
             if (serviceCreated) { Stop(); new TaskManagerPolicy().Restore(); }
             if (File.Exists(Paths.Lease)) throw new InvalidOperationException("恢复记录尚未清除，已保留安装文件，请点击恢复后重试。");
             if (taskCreated) ScheduledRecovery.Remove();
@@ -135,16 +135,12 @@ public static class NativeInstaller
             var old = JsonStorage.Read<Installation>(Paths.Install);
             if (!string.Equals(old.AppPath, executable, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"已有安装位于 {Path.GetDirectoryName(old.AppPath)}，请将安装位置改为该目录后覆盖。");
-            sid = old.UserSid; // Never change the constrained account during an upgrade.
+            sid = old.UserSid;
         }
         RejectReparseAncestors(executable);
         RejectReparseAncestors(Paths.State);
         RejectReparseAncestors(Paths.Install);
         RejectReparseAncestors(Shortcuts);
-        // Validate before stopping a working installation. Existing valid state is never reset.
-        if (File.Exists(Paths.State)) JsonStorage.Read<PlannerState>(Paths.State).Schedule.Validate();
-        else if (IsInstalled() || File.Exists(Paths.Lease))
-            throw new InvalidOperationException("现有状态文件缺失，不能自动清空承诺。请先通过紧急管理命令处理。");
         var paused = File.Exists(Paths.Paused);
         Stop();
         try
@@ -152,11 +148,8 @@ public static class NativeInstaller
             CreateProtectedDirectory(Paths.Data, false);
             File.WriteAllText(Paths.Paused, DateTimeOffset.UtcNow.ToString("O"));
             new TaskManagerPolicy().Restore();
-            var state = File.Exists(Paths.State) ? JsonStorage.Read<PlannerState>(Paths.State) : new PlannerState();
-            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
-            state.Schedule.Validate();
-            // Keep the original JSON as an administrator-only recovery copy.
             if (File.Exists(Paths.State)) File.Copy(Paths.State, Path.Combine(Paths.Data, "state.before-install.json"), true);
+            var state = ReadStateOrDefault();
             CreateProtectedDirectory(directory, true);
             ScheduledRecovery.Remove();
             StopUserProcesses(executable);
@@ -180,9 +173,25 @@ public static class NativeInstaller
         }
         catch
         {
-            // Retain data and recovery records for a retry; never roll back by deleting user state.
             File.WriteAllText(Paths.Paused, DateTimeOffset.UtcNow.ToString("O"));
             throw;
+        }
+    }
+
+    private static PlannerState ReadStateOrDefault()
+    {
+        try
+        {
+            var state = JsonStorage.Read<PlannerState>(Paths.State);
+            state.Validate();
+            return state;
+        }
+        catch (Exception error) when (error is FileNotFoundException or JsonException or InvalidDataException or ArgumentException or NotSupportedException)
+        {
+            if (File.Exists(Paths.State)) File.Copy(Paths.State, Paths.InvalidState, true);
+            File.WriteAllText(Paths.ResetNotice, ResetMessage);
+            Paths.Log("State reset during upgrade: " + error.Message);
+            return new PlannerState();
         }
     }
 
@@ -215,7 +224,6 @@ public static class NativeInstaller
         if (File.Exists(Paths.Lease)) throw new InvalidOperationException("策略恢复尚未完成，请让目标用户登录后重试。");
         ScheduledRecovery.Remove();
         StopUserProcesses(installation.AppPath);
-        // Delete files before removing service registration so a file-in-use failure is retryable.
         if (Directory.Exists(directory)) Directory.Delete(directory, true);
         DeleteService();
         Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false);
@@ -225,7 +233,6 @@ public static class NativeInstaller
 
     private static void CheckUninstallCommitment()
     {
-        // Stop and flush the authority before checking: UI state and disk checkpoints may be stale.
         var running = false;
         if (IsInstalled())
         {
@@ -236,19 +243,17 @@ public static class NativeInstaller
         try
         {
             var state = JsonStorage.Read<PlannerState>(Paths.State);
-            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
+            state.Validate();
             var now = DateTimeOffset.UtcNow;
             var planner = new Planner(state, () => System.Security.Cryptography.RandomNumberGenerator.GetInt32(1_000_000));
             var night = planner.Tick(now);
             var rest = BreakPlanner.Tick(state.Break, state.Schedule.Breaks, now, TimeSpan.Zero,
                 night.Phase == Phase.Restricted, state.Schedule.DisableTaskManager);
-            // Do not rewrite migrated state before restarting a possibly older service.
             if (BreakPlanner.Combine(night, rest).Phase is Phase.Committed or Phase.Reminder or Phase.Restricted)
                 throw new InvalidOperationException("已进入承诺期，当前安排结束前不能卸载。");
         }
         catch
         {
-            // A rejected uninstall must not become a way to pause the service.
             if (running && !File.Exists(Paths.Paused)) Start();
             throw;
         }
@@ -268,7 +273,7 @@ public static class NativeInstaller
                         if (!process.WaitForExit(10000)) throw new IOException("界面进程未退出，请稍后重试卸载。");
                     }
                 }
-                catch (InvalidOperationException) { /* Already exited. */ }
+                catch (InvalidOperationException) { }
             }
         }
     }

@@ -63,7 +63,7 @@ public sealed class GuardService : ServiceBase
             loaded.Validate();
             return loaded;
         }
-        catch (Exception error) when (error is IOException or JsonException or InvalidDataException or ArgumentException or NotSupportedException)
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException or JsonException or InvalidDataException or ArgumentException or NotSupportedException)
         {
             try { policy.Restore(); } catch (Exception e) { Paths.Log(e.Message); }
             Directory.CreateDirectory(Paths.Data);
@@ -215,14 +215,14 @@ public sealed class GuardService : ServiceBase
                 candidate.Schedule.Breaks.RecognizeNaturalRest && candidate.Schedule.Breaks.IdleCountsAsRest);
             if (observed.Kind == WorkActivityKind.Active) return observed;
             if (observed.Kind == WorkActivityKind.Recovering &&
-                (recovering is null || observed.Since < recovering.Since)) recovering = observed;
+                (!recovering.HasValue || observed.Since < recovering.Value.Since)) recovering = observed;
         }
         return recovering ?? WorkObservation.Paused;
     }
 
     private static DateTimeOffset? GuaranteedNightLock(Status night) =>
         night.Phase is Phase.Committed or Phase.Reminder &&
-        night.EffectiveBehavior is { FullscreenOverlay: true } or { LockScreen: true }
+        (night.EffectiveBehavior is { FullscreenOverlay: true } or { LockScreen: true })
             ? night.LockAt : null;
 
     private static string? ReadResetNotice()
