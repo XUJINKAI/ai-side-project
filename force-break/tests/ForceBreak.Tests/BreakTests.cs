@@ -92,7 +92,8 @@ internal static class BreakTests
         {
             foreach (var bad in new[] { Options with { WorkMinutes = double.NaN }, Options with { WorkMinutes = double.PositiveInfinity },
                 Options with { WorkMinutes = 0 }, Options with { RestMinutes = 0 }, Options with { RestMinutes = 181 },
-                Options with { ReminderMinutes = -1 }, Options with { CommitmentMinutes = 9 }, Options with { CommitmentMinutes = 60 } })
+                Options with { ReminderMinutes = -1 }, Options with { CommitmentMinutes = 9 }, Options with { CommitmentMinutes = 60 },
+                Options with { NaturalRestMinutes = 0 }, Options with { MinimumPostBreakMinutes = 181 } })
                 Throws(bad.Validate);
         }),
         ("open interval must exceed ten whole minutes", () =>
@@ -118,10 +119,79 @@ internal static class BreakTests
             var state = new BreakState(); Tick(state, 20, 20);
             Equal(6000d, Tick(state, 20, 0, Options with { WorkMinutes = 120 }).RemainingWorkSeconds);
             Tick(state, 20, 0, Options with { Enabled = false }); Equal(0d, state.WorkSeconds);
+        }),
+        ("continuous natural rest resets uncommitted work", () =>
+        {
+            var state = new BreakState(); Tick(state, 30, 30);
+            var result = Observe(state, 40, WorkObservation.Recovering(Start.AddMinutes(30)));
+            Equal(Phase.Open, result.Phase); Equal(0d, state.WorkSeconds); Equal(3600d, result.RemainingWorkSeconds);
+        }),
+        ("paused or short idle does not reset work", () =>
+        {
+            var state = new BreakState(); Tick(state, 30, 30);
+            Observe(state, 39, WorkObservation.Recovering(Start.AddMinutes(30)));
+            Equal(1800d, state.WorkSeconds);
+            Observe(state, 40, WorkObservation.Paused);
+            Equal(1800d, state.WorkSeconds); Equal<DateTimeOffset?>(null, state.RestStartedAt);
+        }),
+        ("natural rest fulfills a committed break before its deadline", () =>
+        {
+            var state = new BreakState(); Tick(state, 50, 50);
+            Equal(Phase.Open, Observe(state, 60, WorkObservation.Recovering(Start.AddMinutes(50))).Phase);
+            Equal(0d, state.WorkSeconds); Equal<FrozenBreak?>(null, state.Frozen);
+        }),
+        ("rest spanning the deadline shortens enforced remainder", () =>
+        {
+            var state = new BreakState(); Tick(state, 50, 50);
+            var result = Observe(state, 62, WorkObservation.Recovering(Start.AddMinutes(55)));
+            Equal(Phase.Restricted, result.Phase); Equal(Start.AddMinutes(65), result.ReleaseAt);
+        }),
+        ("start cycle now moves the committed break and is idempotent", () =>
+        {
+            var state = new BreakState(); Tick(state, 50, 50);
+            var schedule = new Schedule { Breaks = Options };
+            BreakPlanner.StartCycleNow(state, Options, Start.AddMinutes(50), schedule, Phase.Open);
+            var release = state.Frozen!.ReleaseAt;
+            BreakPlanner.StartCycleNow(state, Options, Start.AddMinutes(51), schedule, Phase.Open);
+            Equal(release, state.Frozen!.ReleaseAt);
+            Equal(Phase.Restricted, Observe(state, 51, WorkObservation.Paused).Phase);
+        }),
+        ("nearby committed bedtime covers a periodic break", () =>
+        {
+            var state = new BreakState();
+            var result = BreakPlanner.Tick(state, Options, Start.AddMinutes(50), TimeSpan.FromMinutes(50),
+                WorkObservation.Active, false, false, guaranteedNightLockAt: Start.AddMinutes(65));
+            Equal(Start.AddMinutes(65), result.CoveredByNightAt);
+            var night = new Status(new(), Phase.Reminder, Start, Start.AddMinutes(65), Start.AddHours(9), false,
+                EffectiveBehavior: new());
+            Equal(false, BreakPlanner.Combine(night, result).IsBreak);
+            result = BreakPlanner.Tick(state, Options, Start.AddMinutes(65), TimeSpan.Zero,
+                WorkObservation.Paused, true, false);
+            Equal(true, result.SuppressedByNight); Equal(0d, state.WorkSeconds);
+        }),
+        ("distant bedtime does not cover a periodic break", () =>
+        {
+            var state = new BreakState();
+            var result = BreakPlanner.Tick(state, Options, Start.AddMinutes(50), TimeSpan.FromMinutes(50),
+                WorkObservation.Active, false, false, guaranteedNightLockAt: Start.AddMinutes(121));
+            Equal<DateTimeOffset?>(null, result.CoveredByNightAt); Equal(Phase.Reminder, result.Phase);
+        }),
+        ("fresh activity hook cannot fabricate a long natural rest", () =>
+        {
+            var lease = new ActivityLease(); var mono = TimeSpan.FromHours(1); var wall = Start;
+            lease.Update(new(true, TimeSpan.FromDays(365).TotalSeconds, HasObservedInput: false), mono);
+            Equal(WorkActivityKind.Paused, lease.Observe(mono, wall, 1, true).Kind);
+            lease.Update(new(true, 600, HasObservedInput: true), mono);
+            var observed = lease.Observe(mono, wall, 1, true);
+            Equal(WorkActivityKind.Recovering, observed.Kind); Equal(wall.AddMinutes(-10), observed.Since);
         })
     ];
+
     private static BreakStatus Tick(BreakState state, double minutes, double elapsed = 0, BreakOptions? options = null) =>
         BreakPlanner.Tick(state, options ?? Options, Start.AddMinutes(minutes), TimeSpan.FromMinutes(elapsed), false, false);
+    private static BreakStatus Observe(BreakState state, double minutes, WorkObservation observation, BreakOptions? options = null) =>
+        BreakPlanner.Tick(state, options ?? Options, Start.AddMinutes(minutes), TimeSpan.Zero,
+            observation, false, false);
     private static void Equal<T>(T expected, T actual)
     { if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception($"Expected {expected}, got {actual}"); }
     private static void Throws(Action action)

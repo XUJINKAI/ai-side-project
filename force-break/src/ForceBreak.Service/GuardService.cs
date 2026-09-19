@@ -2,7 +2,6 @@ using ForceBreak.Core;
 using ForceBreak.Windows;
 using System.IO.Pipes;
 using System.Security.AccessControl;
-using System.Security.Cryptography;
 using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text.Json;
@@ -12,6 +11,7 @@ namespace ForceBreak.Service;
 
 public sealed class GuardService : ServiceBase
 {
+    private const string ResetMessage = "检测到 Force Break 配置格式已经变化或配置文件损坏。程序已恢复默认设置，早睡计划和定时休息均已关闭，请重新检查所有设置并保存。";
     private readonly object gate = new();
     private readonly TaskManagerPolicy policy = new();
     private CancellationTokenSource? stop;
@@ -41,10 +41,7 @@ public sealed class GuardService : ServiceBase
         if (File.Exists(Paths.Paused)) throw new InvalidOperationException("管理员恢复模式已启用，请在界面中点击重新启用。");
         try
         {
-            // Missing state is an error, not a silent reset of a frozen night.
-            state = JsonStorage.Read<PlannerState>(Paths.State);
-            if (state.Version != 1) throw new InvalidDataException("Unknown state version.");
-            state.Schedule.Validate();
+            state = LoadOrResetState();
             lock (gate) Refresh();
         }
         catch
@@ -57,6 +54,28 @@ public sealed class GuardService : ServiceBase
         Paths.Log("Service started.");
     }
 
+    private PlannerState LoadOrResetState()
+    {
+        try
+        {
+            var loaded = JsonStorage.Read<PlannerState>(Paths.State);
+            loaded.Validate();
+            return loaded;
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException or JsonException or InvalidDataException or ArgumentException or NotSupportedException)
+        {
+            try { policy.Restore(); } catch (Exception e) { Paths.Log(e.Message); }
+            Directory.CreateDirectory(Paths.Data);
+            if (File.Exists(Paths.State)) File.Copy(Paths.State, Paths.InvalidState, true);
+            var fresh = new PlannerState();
+            fresh.Validate();
+            JsonStorage.Write(Paths.State, fresh);
+            File.WriteAllText(Paths.ResetNotice, ResetMessage);
+            Paths.Log("State reset after validation failure: " + error.Message);
+            return fresh;
+        }
+    }
+
     private async Task Run(CancellationToken token)
     {
         try { await Task.WhenAll(Clock(token), Serve(token), Serve(token), Serve(token), Serve(token)); }
@@ -64,7 +83,6 @@ public sealed class GuardService : ServiceBase
         catch (Exception error)
         {
             Paths.Log(error.ToString());
-            // Nonzero termination lets SCM apply the documented bounded recovery policy.
             Environment.Exit(1);
         }
     }
@@ -80,7 +98,8 @@ public sealed class GuardService : ServiceBase
                 if (File.Exists(Paths.Paused))
                 {
                     policy.Restore();
-                    status = new(state.Schedule, Phase.Disabled, null, null, null, false, Error: "管理员已暂停限制。");
+                    status = new(state.Schedule, Phase.Disabled, null, null, null, false,
+                        Error: "管理员已暂停限制。", ConfigurationNotice: ReadResetNotice());
                 }
                 else Refresh();
             }
@@ -92,55 +111,69 @@ public sealed class GuardService : ServiceBase
         } while (await timer.WaitForNextTickAsync(token));
     }
 
-    private void Refresh(Schedule? replacement = null, int? manualMinutes = null, bool tomorrow = false, int? tomorrowHour = null)
+    private void Refresh(Schedule? replacement = null, int? manualMinutes = null, bool tomorrow = false,
+        int? tomorrowHour = null, bool startCycleNow = false)
     {
         var candidate = JsonStorage.Clone(state);
-        var planner = new Planner(candidate, () => RandomNumberGenerator.GetInt32(1_000_000));
+        var planner = new Planner(candidate);
         var now = DateTimeOffset.UtcNow;
         var stamp = Stopwatch.GetTimestamp();
         var elapsed = lastTick == 0 ? TimeSpan.Zero : Stopwatch.GetElapsedTime(lastTick, stamp);
         lastTick = stamp;
-        // Sleep/resume or a stalled process does not turn a wall-clock gap into worked time.
         if (elapsed > TimeSpan.FromSeconds(5)) elapsed = TimeSpan.Zero;
-        var unlocked = false;
-        if (candidate.Schedule.Breaks.Enabled && candidate.Break.Frozen is null)
-            try { unlocked = sessions.IsTargetUnlocked(); } catch (Exception e) { ReportError(e.Message); }
-        var active = !candidate.Schedule.Behavior.DetectActivity;
-        if (unlocked)
-            foreach (var pair in activities)
-            {
-                if (!sessions.IsTargetUnlocked(pair.Key)) continue;
-                if (pair.Value.IsResting(MonotonicNow)) { active = false; break; }
-                if (candidate.Schedule.Behavior.DetectActivity && pair.Value.IsActive(MonotonicNow, candidate.Schedule.Behavior.IdleMinutes)) active = true;
-            }
+
+        var activity = ObserveActivity(candidate, now);
+        var activeElapsed = activity.Kind == WorkActivityKind.Active ? elapsed : TimeSpan.Zero;
         var night = planner.Tick(now);
+        var guaranteedNight = GuaranteedNightLock(night);
         var rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now,
-            unlocked && active ? elapsed : TimeSpan.Zero, night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior);
+            activeElapsed, activity, night.Phase == Phase.Restricted,
+            candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior, guaranteedNight);
+
         if (replacement is not null)
         {
             night = planner.Update(replacement, now);
+            activity = ObserveActivity(candidate, now);
+            guaranteedNight = GuaranteedNightLock(night);
             rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now, TimeSpan.Zero,
-                night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior);
+                activity, night.Phase == Phase.Restricted, candidate.Schedule.DisableTaskManager,
+                candidate.Schedule.Behavior, guaranteedNight);
         }
         if (manualMinutes is not null || tomorrow)
         {
             if (tomorrow) BreakPlanner.StartTomorrow(candidate.Break, now, candidate.Schedule, night.Phase, tomorrowHour);
             else BreakPlanner.StartManual(candidate.Break, now, manualMinutes!.Value, candidate.Schedule, night.Phase);
             rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now, TimeSpan.Zero,
-                false, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior);
+                WorkObservation.Paused, false, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior, guaranteedNight);
         }
-        var paused = candidate.Schedule.Breaks.Enabled && candidate.Break.Frozen is null && (!unlocked || !active);
+        if (startCycleNow)
+        {
+            BreakPlanner.StartCycleNow(candidate.Break, candidate.Schedule.Breaks, now, candidate.Schedule, night.Phase);
+            rest = BreakPlanner.Tick(candidate.Break, candidate.Schedule.Breaks, now, TimeSpan.Zero,
+                WorkObservation.Paused, false, candidate.Schedule.DisableTaskManager, candidate.Schedule.Behavior, guaranteedNight);
+        }
+
+        var paused = candidate.Schedule.Breaks.Enabled && candidate.Break.Frozen is null && activity.Kind != WorkActivityKind.Active;
+        var activityMessage = activity.Kind switch
+        {
+            WorkActivityKind.Active when candidate.Schedule.Behavior.DetectActivity => "输入检测已开启；承诺前仅在近期有键鼠操作时累计。",
+            WorkActivityKind.Active => "输入检测未开启；承诺前按解锁时间累计。",
+            WorkActivityKind.Recovering when rest.NaturalRestRequiredSeconds > 0 =>
+                $"正在自然休息：已连续 {Math.Min(Math.Floor(rest.NaturalRestSeconds / 60), Math.Ceiling(rest.NaturalRestRequiredSeconds / 60))} / {Math.Ceiling(rest.NaturalRestRequiredSeconds / 60)} 分钟。",
+            _ => "工作计时已暂停：遮罩显示中、空闲、会话锁定或输入检测尚未就绪。"
+        };
         var next = BreakPlanner.Combine(night, rest) with
         {
             WorkTimerPaused = paused,
-            ActivityMessage = paused ? "工作计时已暂停：遮罩显示中、空闲、会话锁定或输入检测尚未就绪。" :
-                candidate.Schedule.Behavior.DetectActivity ? "输入检测已开启；承诺前仅在近期有键鼠操作时累计。" : "输入检测未开启；承诺前按解锁时间累计。"
+            ActivityMessage = activityMessage,
+            ConfigurationNotice = ReadResetNotice()
         };
         var json = JsonSerializer.Serialize(candidate, JsonStorage.Options);
-        var urgent = replacement is not null || candidate.Frozen != state.Frozen || candidate.Break.Frozen != state.Break.Frozen;
+        var urgent = replacement is not null || candidate.Frozen != state.Frozen ||
+            candidate.Break.Frozen != state.Break.Frozen || candidate.Break.RestStartedAt != state.Break.RestStartedAt;
         if (json != savedJson && (savedJson is null || urgent || Stopwatch.GetElapsedTime(lastSave) >= TimeSpan.FromSeconds(15)))
         {
-            JsonStorage.Write(Paths.State, candidate); // Commit before exposing or enforcing changes.
+            JsonStorage.Write(Paths.State, candidate);
             savedJson = json;
             lastSave = stamp;
         }
@@ -156,10 +189,46 @@ public sealed class GuardService : ServiceBase
         }
         catch (Exception error)
         {
-            // Locking still works when optional policy is unavailable. Never pretend it succeeded.
             status = status with { PolicyMessage = "策略未就绪：" + error.Message };
             ReportError(error.Message);
         }
+    }
+
+    private WorkObservation ObserveActivity(PlannerState candidate, DateTimeOffset now)
+    {
+        var relevant = candidate.Schedule.Breaks.Enabled || candidate.Break.Frozen is not null || candidate.Break.WorkSeconds > 0;
+        if (!relevant) return WorkObservation.Paused;
+        bool unlocked;
+        try { unlocked = sessions.IsTargetUnlocked(); }
+        catch (Exception error) { ReportError(error.Message); return WorkObservation.Paused; }
+        if (!unlocked)
+            return candidate.Schedule.Breaks.RecognizeNaturalRest
+                ? WorkObservation.Recovering(now) : WorkObservation.Paused;
+        if (!candidate.Schedule.Behavior.DetectActivity) return WorkObservation.Active;
+
+        WorkObservation? recovering = null;
+        foreach (var pair in activities)
+        {
+            if (!sessions.IsTargetUnlocked(pair.Key)) continue;
+            var observed = pair.Value.Observe(MonotonicNow, now, candidate.Schedule.Behavior.IdleMinutes,
+                candidate.Schedule.Breaks.RecognizeNaturalRest && candidate.Schedule.Breaks.IdleCountsAsRest);
+            if (observed.Kind == WorkActivityKind.Active) return observed;
+            if (observed.Kind == WorkActivityKind.Recovering &&
+                (recovering is null || observed.Since < recovering.Since)) recovering = observed;
+        }
+        return recovering ?? WorkObservation.Paused;
+    }
+
+    private static DateTimeOffset? GuaranteedNightLock(Status night) =>
+        night.Phase is Phase.Committed or Phase.Reminder &&
+        (night.EffectiveBehavior is { FullscreenOverlay: true } or { LockScreen: true })
+            ? night.LockAt : null;
+
+    private static string? ReadResetNotice()
+    {
+        try { return File.Exists(Paths.ResetNotice) ? File.ReadAllText(Paths.ResetNotice) : null; }
+        catch (IOException) { return ResetMessage; }
+        catch (UnauthorizedAccessException) { return ResetMessage; }
     }
 
     private void ReportError(string message)
@@ -205,7 +274,6 @@ public sealed class GuardService : ServiceBase
                                 case "activity" when request.Activity is not null:
                                     if (!GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var sessionId) || sessionId == 0)
                                         throw new InvalidOperationException("无法确认输入检测会话。");
-                                    // Flush elapsed time using the previous report before accepting new activity.
                                     Refresh();
                                     if (!activities.TryGetValue((int)sessionId, out var lease)) activities[(int)sessionId] = lease = new();
                                     lease.Update(request.Activity, MonotonicNow);
@@ -214,6 +282,10 @@ public sealed class GuardService : ServiceBase
                                     Refresh(tomorrow: true, tomorrowHour: request.TomorrowHour); response = new(true, status); break;
                                 case "rest" when request.RestMinutes is { } minutes:
                                     Refresh(manualMinutes: minutes); response = new(true, status); break;
+                                case "start-cycle-rest-now":
+                                    Refresh(startCycleNow: true); response = new(true, status); break;
+                                case "acknowledge-reset":
+                                    File.Delete(Paths.ResetNotice); Refresh(); response = new(true, status); break;
                                 case "status": Refresh(); response = new(true, status); break;
                                 case "save" when request.Schedule is not null:
                                     Refresh(request.Schedule); response = new(true, status); break;

@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -8,10 +9,10 @@ namespace ForceBreak.App;
 
 internal sealed class ReminderWindow : Window
 {
-    public ReminderWindow(DateTimeOffset bedtime, bool isBreak = false)
+    public ReminderWindow(DateTimeOffset bedtime, bool isBreak = false, Func<Task>? startNow = null)
     {
         Title = isBreak ? "该休息了" : "该睡觉了";
-        Width = 560; Height = 340; Topmost = true;
+        Width = 560; Height = startNow is null ? 340 : 410; Topmost = true;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = new SolidColorBrush(Color.FromRgb(19, 28, 46));
         Foreground = Brushes.White;
@@ -24,6 +25,19 @@ internal sealed class ReminderWindow : Window
             Text = "到点将开始休息。请保存工作，准备休息。\n本次计划已固定，不能延期。",
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 20, 0, 20), FontSize = 16
         });
+        var feedback = new TextBlock { Foreground = Brushes.LightSalmon, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) };
+        if (startNow is not null)
+        {
+            var begin = new Button { Content = "现在开始休息", Padding = new Thickness(18, 10, 18, 10), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 10) };
+            begin.Click += async (_, _) =>
+            {
+                begin.IsEnabled = false; feedback.Text = "";
+                try { await startNow(); Close(); }
+                catch (Exception error) { feedback.Text = "无法开始休息：" + error.Message; begin.IsEnabled = true; }
+            };
+            content.Children.Add(begin);
+            content.Children.Add(feedback);
+        }
         var close = new Button { Content = "知道了，继续收尾", Padding = new Thickness(14, 8, 14, 8), HorizontalAlignment = HorizontalAlignment.Left };
         close.Click += (_, _) => Close();
         content.Children.Add(close);
@@ -32,12 +46,23 @@ internal sealed class ReminderWindow : Window
         void Update()
         {
             var remaining = bedtime - DateTimeOffset.UtcNow;
-            countdown.Text = remaining > TimeSpan.Zero ? $"还有 {Math.Ceiling(remaining.TotalMinutes)} 分钟" : isBreak ? "休息时间" : "晚安";
-            if (remaining <= TimeSpan.Zero) Close();
+            if (remaining <= TimeSpan.Zero)
+            {
+                countdown.Text = CountdownText(remaining, isBreak);
+                Close();
+                return;
+            }
+            countdown.Text = CountdownText(remaining, isBreak);
         }
         timer.Tick += (_, _) => Update();
         Closed += (_, _) => timer.Stop();
         Loaded += (_, _) => { Update(); timer.Start(); };
     }
 
+    internal static string CountdownText(TimeSpan remaining, bool isBreak) =>
+        remaining <= TimeSpan.Zero
+            ? isBreak ? "休息时间" : "晚安"
+            : isBreak && remaining <= TimeSpan.FromMinutes(1)
+                ? $"还有 {Math.Max(1, Math.Ceiling(remaining.TotalSeconds))} 秒"
+                : $"还有 {Math.Ceiling(remaining.TotalMinutes)} 分钟";
 }

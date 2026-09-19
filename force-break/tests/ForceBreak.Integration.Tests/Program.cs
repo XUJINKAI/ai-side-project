@@ -64,7 +64,9 @@ try
     reply = await Wire.Send(new Request("save", state.Schedule with { Breaks = new BreakOptions() }));
     Check(reply.Ok && reply.Status?.Break?.Phase == Phase.Reminder && reply.Status.Break.ReleaseAt == frozenRelease,
         "real IPC cannot cancel or postpone an already committed break");
-    NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable, overwrite: true);
+    var installedExecutable = Path.Combine(directory, "ForceBreak.exe");
+    await WithTemporaryReadLock(installedExecutable, () =>
+        NativeInstaller.Execute(MaintenanceAction.Install, sid, directory, executable, overwrite: true));
     reply = await Wire.Send(new Request("status"));
     Check(reply.Ok && reply.Status?.Break?.ReleaseAt == frozenRelease && reply.Status?.Break?.Phase == Phase.Reminder,
         "confirmed overwrite preserves frozen break and resumes enforcement");
@@ -86,7 +88,8 @@ try
         await recover.WaitForExitAsync();
         Check(recover.ExitCode == 0, "same EXE supports independent recovery task");
     }
-    NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall);
+    await WithTemporaryReadLock(installedExecutable, () =>
+        NativeInstaller.Execute(MaintenanceAction.Uninstall, sid, directory, executable, NativeInstaller.EmergencyUninstall));
     installed = false;
     Check(!Directory.Exists(directory) && !Directory.Exists(Paths.Data) && !Directory.Exists(NativeInstaller.Shortcuts), "native uninstall removes application, state and shortcuts");
     Check(!NativeInstaller.IsInstalled(), "native uninstall removes service registration");
@@ -136,6 +139,18 @@ finally
 
 static void Check(bool condition, string name)
 { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); }
+
+static async Task WithTemporaryReadLock(string path, Action operation)
+{
+    var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+    var unlock = Task.Run(async () =>
+    {
+        await Task.Delay(750);
+        locked.Dispose();
+    });
+    try { operation(); }
+    finally { await unlock; }
+}
 
 static async Task<(int Code, string Text)> Cli(string executable, params string[] args)
 {

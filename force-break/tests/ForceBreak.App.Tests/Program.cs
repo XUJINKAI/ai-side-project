@@ -19,6 +19,7 @@ internal static class Program
             try
             {
                 CheckTomorrowMenu();
+                CheckReminderCountdown();
                 using (var overlay = new RestOverlay(path))
                 {
                     overlay.OpenManual();
@@ -58,6 +59,7 @@ internal static class Program
         };
         app.Run(); return result;
     }
+
     private static void CheckTomorrowMenu()
     {
         var schedule = new Schedule { TimeZoneId = "China Standard Time" };
@@ -68,6 +70,15 @@ internal static class Program
         Check(!TrayController.IsTomorrowRestVisible(evening.AddHours(6), schedule), "tomorrow menu disappears at midnight");
         Check(!TrayController.IsTomorrowRestVisible(evening, null), "tomorrow menu hidden before schedule is known");
     }
+
+    private static void CheckReminderCountdown()
+    {
+        Check(ReminderWindow.CountdownText(TimeSpan.FromSeconds(60), true) == "还有 60 秒", "final break minute counts seconds");
+        Check(ReminderWindow.CountdownText(TimeSpan.FromSeconds(61), true) == "还有 2 分钟", "earlier break reminder counts minutes");
+        Check(ReminderWindow.CountdownText(TimeSpan.FromSeconds(30), false) == "还有 1 分钟", "bedtime reminder stays in minutes");
+        Check(ReminderWindow.CountdownText(TimeSpan.Zero, true) == "休息时间", "break countdown has a terminal label");
+    }
+
     private static void CheckPresence(Application app, string path)
     {
         bool? currentDesktop = true;
@@ -105,6 +116,7 @@ internal static class Program
         overlay.RefreshPresence();
         Check(!overlay.IsVisible && app.Windows.Count == 0, "presence timer cannot reopen a closed overlay");
     }
+
     private static void Capture(Window window, int width, int height, string name)
     {
         window.Width = width; window.Height = height; window.UpdateLayout();
@@ -114,12 +126,14 @@ internal static class Program
         var folder = Path.GetFullPath("out/overlay-previews"); Directory.CreateDirectory(folder);
         using var file = File.Create(Path.Combine(folder, name)); encoder.Save(file);
     }
+
     private static IEnumerable<T> Find<T>(DependencyObject root) where T : DependencyObject
     {
         if (root is T item) yield return item;
         foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
             foreach (var match in Find<T>(child)) yield return match;
     }
+
     private static void Check(bool value, string name)
     { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
 }

@@ -1,12 +1,12 @@
 namespace ForceBreak.Core;
 
-public sealed class Planner(PlannerState state, Func<int> draw)
+public sealed class Planner(PlannerState state)
 {
     public PlannerState State { get; } = state;
 
     public Status Tick(DateTimeOffset now)
     {
-        if (State.Version != 1 || State.Draws is null) throw new InvalidDataException("Invalid planner state.");
+        if (State.Version != 1) throw new InvalidDataException("Invalid planner state.");
         State.Schedule.Validate();
         if (State.Frozen is { } frozen)
         {
@@ -20,8 +20,6 @@ public sealed class Planner(PlannerState state, Func<int> draw)
 
         var date = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now,
             TimeZoneInfo.FindSystemTimeZoneById(State.Schedule.TimeZoneId)).DateTime);
-        // Persist the draw before the commitment window starts, even if temporarily disabled.
-        GetDraw(date);
         foreach (var d in new[] { date.AddDays(-1), date })
         {
             if (!State.Schedule.Enabled || !State.Schedule.Days.Contains(d.DayOfWeek) ||
@@ -33,7 +31,6 @@ public sealed class Planner(PlannerState state, Func<int> draw)
                 return Describe(night, now);
             }
         }
-        foreach (var old in State.Draws.Keys.Where(d => d < date.AddDays(-2)).ToArray()) State.Draws.Remove(old);
         if (!State.Schedule.Enabled) return new(State.Schedule, Phase.Disabled, null, null, null, false);
         for (var i = 0; i < 8; i++)
         {
@@ -58,25 +55,12 @@ public sealed class Planner(PlannerState state, Func<int> draw)
         now >= n.LockAt ? Phase.Restricted : now >= n.RemindAt ? Phase.Reminder : Phase.Committed,
         n.RemindAt, n.LockAt, n.ReleaseAt, n.DisableTaskManager, EffectiveBehavior: n.Behavior);
 
-    private int GetDraw(DateOnly date)
-    {
-        if (!State.Draws.TryGetValue(date, out var value))
-        {
-            value = draw();
-            if (value < 0 || value >= 1_000_000) throw new InvalidOperationException("Invalid random sample.");
-            State.Draws[date] = value;
-        }
-        return value;
-    }
-
     private Night Build(DateOnly date)
     {
         var s = State.Schedule;
         var zone = TimeZoneInfo.FindSystemTimeZoneById(s.TimeZoneId);
-        var rangeMinutes = s.JitterMinutes;
-        var minutes = (long)GetDraw(date) * (2 * rangeMinutes + 1) / 1_000_000 - rangeMinutes;
         return new(date,
-            Resolve(date.ToDateTime(s.Commitment).AddMinutes(minutes), zone, false),
+            Resolve(date.ToDateTime(s.Commitment), zone, false),
             Resolve(date.ToDateTime(s.Reminder), zone, false),
             Resolve(date.ToDateTime(s.Bedtime), zone, false),
             Resolve(date.AddDays(1).ToDateTime(s.Release), zone, true), s.DisableTaskManager, s.Behavior);

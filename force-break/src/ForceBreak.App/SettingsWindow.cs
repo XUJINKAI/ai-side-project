@@ -21,7 +21,12 @@ internal sealed class SettingsWindow : Window
     private readonly CheckBox taskManager = new() { Content = "承诺期开始后临时禁用任务管理器", Margin = new Thickness(0, 12, 0, 6) };
     private readonly CheckBox breaksEnabled = new() { Content = "启用定时强制休息", Margin = new Thickness(0, 18, 0, 10) };
     private readonly TextBox workMinutes = new(), restMinutes = new(), breakReminder = new(), breakCommitment = new();
-    private readonly TextBox commitment = new(), jitter = new(), reminder = new(), bedtime = new(), release = new();
+    private readonly CheckBox recognizeNaturalRest = new() { Content = "自动识别自然休息", Margin = new Thickness(0, 14, 0, 6) };
+    private readonly CheckBox idleCountsAsRest = new() { Content = "连续无键鼠操作也算自然休息", Margin = new Thickness(0, 6, 0, 6) };
+    private readonly TextBox naturalRestMinutes = new();
+    private readonly CheckBox mergeWithBedtime = new() { Content = "临近早睡时合并定时休息", Margin = new Thickness(0, 14, 0, 6) };
+    private readonly TextBox minimumPostBreakMinutes = new();
+    private readonly TextBox commitment = new(), reminder = new(), bedtime = new(), release = new();
     private readonly ComboBox zones = new() { MinWidth = 240, DisplayMemberPath = "DisplayName" };
     private readonly Dictionary<DayOfWeek, CheckBox> days = new();
     private readonly Button save = new() { Content = "保存配置", Padding = new Thickness(22, 9, 22, 9), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = false };
@@ -29,7 +34,7 @@ internal sealed class SettingsWindow : Window
     private readonly TabControl tabs = new();
     private readonly CheckBox detectActivity = new() { Content = "键鼠动作检测", Margin = new Thickness(0, 12, 0, 6) };
     private readonly CheckBox fullscreen = new() { Content = "休息期全屏遮罩", Margin = new Thickness(0, 12, 0, 6) };
-    private readonly CheckBox lockScreen = new() { Content = "休息期锁屏", Margin = new Thickness(0, 12, 0, 6) };
+    private readonly CheckBox lockScreen = new() { Content = "休息期锁定Windows", Margin = new Thickness(0, 12, 0, 6) };
     private readonly TextBox idleMinutes = new();
     private bool initialized;
     private bool saving;
@@ -38,7 +43,7 @@ internal sealed class SettingsWindow : Window
     public SettingsWindow(bool agent)
     {
         Title = "Force Break · 工作与休息";
-        Width = 660; Height = 640; MinWidth = 570; MinHeight = 500;
+        Width = 680; Height = 680; MinWidth = 590; MinHeight = 520;
         Background = new SolidColorBrush(Color.FromRgb(246, 248, 252));
         FontFamily = new FontFamily("Microsoft YaHei UI"); FontSize = 14;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -62,10 +67,10 @@ internal sealed class SettingsWindow : Window
         }
         panel.Children.Add(management);
         panel.Children.Add(stateText); panel.Children.Add(detail);
-        panel.Children.Add(new TextBlock { Text = "关闭面板后继续在托盘运行。左键单击托盘回到本页；悬停查看距离休息的时间；右键可选择 5—120 分钟休息、直到明天或手动笔记遮罩。\n\n第一次安装后请启用需要的计划。进入承诺期后，本轮时间和限制行为固定；修改只影响后续安排，当前安排结束前不能卸载。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
+        panel.Children.Add(new TextBlock { Text = "关闭面板后继续在托盘运行。左键单击托盘回到本页；悬停查看距离休息的时间；右键可选择 5—120 分钟休息、直到明天或手动笔记遮罩。\n\n第一次安装后请启用需要的计划。进入承诺期后，本轮休息义务和限制行为固定；可以提前开始或用连续自然休息完成，但不能取消或延期。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
         panel = Page("早睡计划");
         panel.Children.Add(enabled);
-        AddRow(panel, "承诺时间中心", commitment); AddRow(panel, "前后随机（分钟）", jitter);
+        AddRow(panel, "承诺时间", commitment);
         AddRow(panel, "首次提醒", reminder); AddRow(panel, "开始限制", bedtime); AddRow(panel, "次日解除", release);
         var week = new WrapPanel { Margin = new Thickness(0, 10, 0, 10) };
         var order = new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
@@ -78,18 +83,23 @@ internal sealed class SettingsWindow : Window
         panel.Children.Add(week);
         foreach (var zone in TimeZoneInfo.GetSystemTimeZones()) zones.Items.Add(zone);
         AddRow(panel, "计划时区", zones);
-        panel.Children.Add(new TextBlock { Text = "随机承诺时刻整晚固定，不提前公布。承诺范围必须早于首次提醒；解除时间属于次日。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 12, 0, 0) });
+        panel.Children.Add(new TextBlock { Text = "承诺时间必须早于首次提醒；解除时间属于次日。进入承诺期后，当晚安排固定，不能取消或延期。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 12, 0, 0) });
         panel = Page("定时休息");
         panel.Children.Add(breaksEnabled);
         AddRow(panel, "工作间隔（分钟）", workMinutes);
         AddRow(panel, "休息时长（分钟）", restMinutes);
         AddRow(panel, "提前提醒（分钟）", breakReminder);
         AddRow(panel, "提前承诺（分钟）", breakCommitment);
-        panel.Children.Add(new TextBlock { Text = "工作间隔不包含休息时长：工作 50 分钟、休息 10 分钟组成一轮。开启动作检测后，空闲也会暂停工作累计；锁屏、注销和睡眠期间不累计。进入承诺期后按固定时间执行，本轮不能取消或延期。全部使用整数分钟；提醒提前量不超过承诺提前量，工作间隔减去承诺提前量必须至少为 11 分钟。夜间限制优先，结束后重新累计。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
+        panel.Children.Add(recognizeNaturalRest);
+        AddRow(panel, "自然休息时长（分钟）", naturalRestMinutes);
+        panel.Children.Add(idleCountsAsRest);
+        panel.Children.Add(mergeWithBedtime);
+        AddRow(panel, "休息后最短可用（分钟）", minimumPostBreakMinutes);
+        panel.Children.Add(new TextBlock { Text = "连续离开达到自然休息时长后，本轮工作计时归零。锁屏和睡眠可被识别；勾选无键鼠操作后，阅读或看视频也可能被认为正在休息。若一次定时休息结束后，到已承诺早睡的可用时间不超过设定值，本轮休息会并入早睡。提醒窗口可直接提前开始本轮休息。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
         panel = Page("行为配置");
         panel.Children.Add(detectActivity);
         AddRow(panel, "空闲暂停（分钟）", idleMinutes);
-        panel.Children.Add(new TextBlock { Text = "通过低级键盘 / 鼠标 Hook 检测操作，仅记录距上次操作的时长，不记录按键内容。达到空闲阈值后暂停工作计时，有操作后继续；进入承诺期后不再暂停本轮倒计时。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
+        panel.Children.Add(new TextBlock { Text = "空闲暂停决定多久无输入后停止累计工作；自然休息时长决定连续离开多久后整轮清零。输入检测只记录距上次操作的时长。", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray });
         panel.Children.Add(taskManager);
         panel.Children.Add(fullscreen); panel.Children.Add(lockScreen);
         panel.Children.Add(new TextBlock
@@ -126,7 +136,7 @@ internal sealed class SettingsWindow : Window
     private static void AddRow(Panel panel, string label, Control control)
     {
         var grid = new Grid { Margin = new Thickness(0, 5, 0, 5) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(155) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
         control.Padding = new Thickness(8, 5, 8, 5);
@@ -137,12 +147,14 @@ internal sealed class SettingsWindow : Window
     {
         stateText.Text = PhaseText(status.Phase, status.IsBreak);
         var s = status.Schedule;
-        var center = s.Commitment.ToTimeSpan();
-        var range = $"{center - TimeSpan.FromMinutes(s.JitterMinutes):hh\\:mm}—{center + TimeSpan.FromMinutes(s.JitterMinutes):hh\\:mm}";
-        detail.Text = $"设置的承诺范围：{range}\n当前安排：提醒 {Format(status.ReminderAt)} · 开始休息 {Format(status.LockAt)}\n解除 {Format(status.ReleaseAt)}\n{status.PolicyMessage}";
+        detail.Text = $"设置的承诺时间：{s.Commitment.ToString("HH:mm")}\n当前安排：提醒 {Format(status.ReminderAt)} · 开始休息 {Format(status.LockAt)}\n解除 {Format(status.ReleaseAt)}\n{status.PolicyMessage}";
         if (status.Break is { } rest)
+        {
+            var worked = Math.Max(0, s.Breaks.WorkMinutes * 60 - rest.RemainingWorkSeconds);
             detail.Text += rest.SuppressedByNight ? "\n定时休息：夜间限制期间暂停" :
-                $"\n定时休息：{PhaseText(rest.Phase, true)} · 距离休息约 {Math.Ceiling(rest.RemainingWorkSeconds / 60)} 分钟\n本轮休息 {Format(rest.LockAt)}—{Format(rest.ReleaseAt)}";
+                rest.CoveredByNightAt is { } covered ? $"\n定时休息：本轮已并入 {covered.ToLocalTime():HH:mm} 早睡" :
+                $"\n定时休息：{PhaseText(rest.Phase, true)} · 本轮工作约 {Math.Floor(worked / 60)} / {s.Breaks.WorkMinutes} 分钟\n本轮休息 {Format(rest.LockAt)}—{Format(rest.ReleaseAt)}";
+        }
         detail.Text += "\n" + status.ActivityMessage;
         if (uninstall is not null)
         {
@@ -153,7 +165,7 @@ internal sealed class SettingsWindow : Window
         if (initialized) return;
         initialized = true;
         enabled.IsChecked = s.Enabled;
-        commitment.Text = s.Commitment.ToString("HH:mm"); jitter.Text = s.JitterMinutes.ToString(CultureInfo.InvariantCulture);
+        commitment.Text = s.Commitment.ToString("HH:mm");
         reminder.Text = s.Reminder.ToString("HH:mm"); bedtime.Text = s.Bedtime.ToString("HH:mm"); release.Text = s.Release.ToString("HH:mm");
         taskManager.IsChecked = s.DisableTaskManager;
         detectActivity.IsChecked = s.Behavior.DetectActivity;
@@ -164,6 +176,11 @@ internal sealed class SettingsWindow : Window
         restMinutes.Text = s.Breaks.RestMinutes.ToString(CultureInfo.InvariantCulture);
         breakReminder.Text = s.Breaks.ReminderMinutes.ToString(CultureInfo.InvariantCulture);
         breakCommitment.Text = s.Breaks.CommitmentMinutes.ToString(CultureInfo.InvariantCulture);
+        recognizeNaturalRest.IsChecked = s.Breaks.RecognizeNaturalRest;
+        naturalRestMinutes.Text = s.Breaks.NaturalRestMinutes.ToString(CultureInfo.InvariantCulture);
+        idleCountsAsRest.IsChecked = s.Breaks.IdleCountsAsRest;
+        mergeWithBedtime.IsChecked = s.Breaks.MergeWithBedtime;
+        minimumPostBreakMinutes.Text = s.Breaks.MinimumPostBreakMinutes.ToString(CultureInfo.InvariantCulture);
         foreach (var item in days) item.Value.IsChecked = s.Days.Contains(item.Key);
         zones.SelectedItem = zones.Items.Cast<TimeZoneInfo>().FirstOrDefault(z => z.Id == s.TimeZoneId);
     }
@@ -178,7 +195,7 @@ internal sealed class SettingsWindow : Window
             var schedule = new Schedule
             {
                 Enabled = enabled.IsChecked == true,
-                Commitment = Parse(commitment.Text), JitterMinutes = int.Parse(jitter.Text, CultureInfo.InvariantCulture),
+                Commitment = Parse(commitment.Text),
                 Reminder = Parse(reminder.Text), Bedtime = Parse(bedtime.Text), Release = Parse(release.Text),
                 Days = days.Where(p => p.Value.IsChecked == true).Select(p => p.Key).ToArray(),
                 TimeZoneId = (zones.SelectedItem as TimeZoneInfo)?.Id ?? throw new ArgumentException("请选择时区。"),
@@ -192,7 +209,12 @@ internal sealed class SettingsWindow : Window
                     WorkMinutes = int.Parse(workMinutes.Text, CultureInfo.InvariantCulture),
                     RestMinutes = int.Parse(restMinutes.Text, CultureInfo.InvariantCulture),
                     ReminderMinutes = int.Parse(breakReminder.Text, CultureInfo.InvariantCulture),
-                    CommitmentMinutes = int.Parse(breakCommitment.Text, CultureInfo.InvariantCulture)
+                    CommitmentMinutes = int.Parse(breakCommitment.Text, CultureInfo.InvariantCulture),
+                    RecognizeNaturalRest = recognizeNaturalRest.IsChecked == true,
+                    NaturalRestMinutes = int.Parse(naturalRestMinutes.Text, CultureInfo.InvariantCulture),
+                    IdleCountsAsRest = idleCountsAsRest.IsChecked == true,
+                    MergeWithBedtime = mergeWithBedtime.IsChecked == true,
+                    MinimumPostBreakMinutes = int.Parse(minimumPostBreakMinutes.Text, CultureInfo.InvariantCulture)
                 }
             };
             schedule.Validate();

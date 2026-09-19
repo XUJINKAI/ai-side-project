@@ -12,6 +12,8 @@ public static class Paths
     public static string Data => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ForceBreak");
     public static string Install => Path.Combine(Data, "installation.json");
     public static string State => Path.Combine(Data, "state.json");
+    public static string InvalidState => Path.Combine(Data, "state.invalid.json");
+    public static string ResetNotice => Path.Combine(Data, "configuration-reset.txt");
     public static string Lease => Path.Combine(Data, "task-manager-lease.json");
     public static string Paused => Path.Combine(Data, "paused");
     public static Installation ReadInstallation()

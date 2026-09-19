@@ -29,6 +29,7 @@ internal sealed class TrayController : IDisposable
     private bool busy;
     private bool stopping;
     private string? noticeKey;
+    private string? shownConfigurationNotice;
     private readonly bool agent;
 
     public TrayController(bool agent)
@@ -86,13 +87,13 @@ internal sealed class TrayController : IDisposable
             if (agent && status.Schedule.Behavior.DetectActivity && activity is null) activity = new();
             if (!status.Schedule.Behavior.DetectActivity && activity is not null) { activity.Dispose(); activity = null; }
             if (agent) RenderAndEnforce();
+            await ShowConfigurationNotice(status.ConfigurationNotice);
         }
         catch (Exception error)
         {
             if (stopping) return;
             tray.Text = "Force Break · 服务未连接";
             settings.SetConnectionError("服务未连接：" + error.Message + "\n请安装或启动服务；此时无法保证限制生效。");
-            // Fail open on stale authority. Never trap the user after repair/service failure.
             if (lastSuccess == 0 || Stopwatch.GetElapsedTime(lastSuccess) > TimeSpan.FromSeconds(5))
             {
                 status = null;
@@ -100,6 +101,16 @@ internal sealed class TrayController : IDisposable
             }
         }
         finally { busy = false; }
+    }
+
+    private async Task ShowConfigurationNotice(string? notice)
+    {
+        if (string.IsNullOrWhiteSpace(notice) || shownConfigurationNotice == notice) return;
+        shownConfigurationNotice = notice;
+        MessageBox.Show(notice, "Force Break · 配置已重置", MessageBoxButton.OK, MessageBoxImage.Warning);
+        ShowSettings();
+        var reply = await Wire.Send(new("acknowledge-reset"));
+        if (!reply.Ok) tray.ShowBalloonTip(10000, "无法确认配置提示", reply.Error ?? "后台服务未确认。", Forms.ToolTipIcon.Warning);
     }
 
     internal static bool IsTomorrowRestVisible(DateTimeOffset now, Schedule? schedule) =>
@@ -116,7 +127,7 @@ internal sealed class TrayController : IDisposable
         if (value.Phase == Phase.Restricted && value.ReleaseAt is { } end)
             return $"Force Break · 休息剩余 {Math.Max(1, Math.Ceiling((end - DateTimeOffset.UtcNow).TotalMinutes))} 分钟";
         var seconds = value.LockAt is { } start ? Math.Max(0, (start - DateTimeOffset.UtcNow).TotalSeconds) : double.PositiveInfinity;
-        if (value.Break is { Phase: not Phase.Disabled } rest) seconds = Math.Min(seconds, rest.RemainingWorkSeconds);
+        if (value.Break is { Phase: not Phase.Disabled, CoveredByNightAt: null } rest) seconds = Math.Min(seconds, rest.RemainingWorkSeconds);
         return double.IsFinite(seconds) ? $"Force Break · 距休息约 {Math.Ceiling(seconds / 60)} 分钟{(value.WorkTimerPaused ? "（工作计时暂停）" : "")}" : "Force Break · 计划未启用";
     }
 
@@ -130,6 +141,14 @@ internal sealed class TrayController : IDisposable
             settings.UpdateStatus(status); RenderAndEnforce();
         }
         catch (Exception error) { tray.ShowBalloonTip(10000, "无法开始休息", error.Message, Forms.ToolTipIcon.Info); }
+    }
+
+    private async Task StartCycleRestNow()
+    {
+        var reply = await Wire.Send(new("start-cycle-rest-now"));
+        if (!reply.Ok || reply.Status is null) throw new InvalidOperationException(reply.Error ?? "服务返回无效状态。");
+        status = reply.Status; lastSuccess = Stopwatch.GetTimestamp();
+        settings.UpdateStatus(status); RenderAndEnforce();
     }
 
     private void RenderAndEnforce()
@@ -146,7 +165,8 @@ internal sealed class TrayController : IDisposable
                 noticeKey = key;
                 tray.ShowBalloonTip(15000, status.IsBreak ? "该准备休息了" : "该准备睡觉了", $"{bedtime.ToLocalTime():HH:mm} 开始休息，请保存工作。", Forms.ToolTipIcon.Info);
                 CloseReminders();
-                var window = new ReminderWindow(bedtime, status.IsBreak);
+                Func<Task>? startNow = status.IsBreak ? StartCycleRestNow : null;
+                var window = new ReminderWindow(bedtime, status.IsBreak, startNow);
                 reminders.Add(window); window.Show();
             }
         }
