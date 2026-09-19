@@ -215,7 +215,7 @@ public sealed class GuardService : ServiceBase
                 candidate.Schedule.Breaks.RecognizeNaturalRest && candidate.Schedule.Breaks.IdleCountsAsRest);
             if (observed.Kind == WorkActivityKind.Active) return observed;
             if (observed.Kind == WorkActivityKind.Recovering &&
-                (!recovering.HasValue || observed.Since < recovering.Value.Since)) recovering = observed;
+                (recovering is null || observed.Since < recovering.Since)) recovering = observed;
         }
         return recovering ?? WorkObservation.Paused;
     }
