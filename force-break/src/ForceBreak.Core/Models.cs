@@ -48,6 +48,13 @@ public sealed class PlannerState
     public Night? Frozen { get; set; }
     public DateOnly? CompletedThrough { get; set; }
     public BreakState Break { get; set; } = new();
+
+    public void Validate()
+    {
+        if (Version != 1 || Draws is null || Break is null) throw new InvalidDataException("Invalid planner state.");
+        Schedule.Validate();
+        if (!double.IsFinite(Break.WorkSeconds) || Break.WorkSeconds < 0) throw new InvalidDataException("Invalid break timer.");
+    }
 }
 
 // Exact random commitment timestamps and random draws never leave the service.
@@ -55,7 +62,8 @@ public sealed record Status(Schedule Schedule, Phase Phase, DateTimeOffset? Remi
     DateTimeOffset? LockAt, DateTimeOffset? ReleaseAt, bool TaskManagerRequested,
     string? PolicyMessage = null, string? Error = null, BreakStatus? Break = null,
     bool IsBreak = false, DateTimeOffset? PolicyUntil = null, BehaviorOptions? EffectiveBehavior = null,
-    bool WorkTimerPaused = false, string? ActivityMessage = null);
+    bool WorkTimerPaused = false, string? ActivityMessage = null, string? ConfigurationNotice = null);
 
-public sealed record Request(string Command, Schedule? Schedule = null, int? RestMinutes = null, ActivityReport? Activity = null, int? TomorrowHour = null);
+public sealed record Request(string Command, Schedule? Schedule = null, int? RestMinutes = null,
+    ActivityReport? Activity = null, int? TomorrowHour = null);
 public sealed record Response(bool Ok, Status? Status = null, string? Error = null);
