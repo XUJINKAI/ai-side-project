@@ -16,6 +16,7 @@ public sealed class InputActivityMonitor : IDisposable
     private long lastPump;
     private volatile bool installed;
     private volatile uint threadId;
+    private int observedInput;
     private int disposed;
 
     public InputActivityMonitor()
@@ -32,21 +33,26 @@ public sealed class InputActivityMonitor : IDisposable
         var stamp = Interlocked.Read(ref lastInput);
         var pump = Interlocked.Read(ref lastPump);
         return new(installed && pump != 0 && Stopwatch.GetElapsedTime(pump) < TimeSpan.FromSeconds(5),
-            stamp == 0 ? TimeSpan.FromDays(365).TotalSeconds : Stopwatch.GetElapsedTime(stamp).TotalSeconds);
+            stamp == 0 ? TimeSpan.FromDays(365).TotalSeconds : Stopwatch.GetElapsedTime(stamp).TotalSeconds,
+            HasObservedInput: Volatile.Read(ref observedInput) != 0);
     }
 
     private IntPtr Keyboard(int code, IntPtr message, IntPtr data)
     {
-        // KBDLLHOOKSTRUCT.flags: ignore injected events, but always pass all input through.
         if (code == 0 && (Marshal.ReadInt32(data, 8) & 0x10) == 0)
+        {
             Interlocked.Exchange(ref lastInput, Stopwatch.GetTimestamp());
+            Volatile.Write(ref observedInput, 1);
+        }
         return CallNextHookEx(IntPtr.Zero, code, message, data);
     }
     private IntPtr Mouse(int code, IntPtr message, IntPtr data)
     {
-        // MSLLHOOKSTRUCT.flags follows POINT and mouseData.
         if (code == 0 && (Marshal.ReadInt32(data, 12) & 1) == 0)
+        {
             Interlocked.Exchange(ref lastInput, Stopwatch.GetTimestamp());
+            Volatile.Write(ref observedInput, 1);
+        }
         return CallNextHookEx(IntPtr.Zero, code, message, data);
     }
 
@@ -56,7 +62,7 @@ public sealed class InputActivityMonitor : IDisposable
         UIntPtr timer = UIntPtr.Zero;
         try
         {
-            PeekMessage(out _, IntPtr.Zero, 0, 0, 0); // Create queue before exposing its thread id.
+            PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
             threadId = GetCurrentThreadId();
             void Install()
             {
@@ -78,7 +84,6 @@ public sealed class InputActivityMonitor : IDisposable
                 if (message.Id == 0x0113)
                 {
                     Interlocked.Exchange(ref lastPump, Stopwatch.GetTimestamp());
-                    // Windows can silently remove a timed-out hook. Periodically re-arm on its own thread.
                     if (++ticks % 60 == 0 || !installed) Install();
                 }
             }
@@ -99,7 +104,6 @@ public sealed class InputActivityMonitor : IDisposable
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         if (threadId != 0) PostThreadMessage(threadId, 0x0012, IntPtr.Zero, IntPtr.Zero);
         thread.Join(TimeSpan.FromSeconds(2));
-        // Keep delegates rooted until the hook thread has unregistered both hooks.
     }
 
     private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
