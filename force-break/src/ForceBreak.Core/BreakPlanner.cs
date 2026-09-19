@@ -185,8 +185,7 @@ public static class BreakPlanner
     public static void StartManual(BreakState state, DateTimeOffset now, int minutes, Schedule schedule, Phase nightPhase)
     {
         if (minutes is < 1 or > 120) throw new ArgumentException("手动休息时长必须为 1—120 整数分钟。");
-        StartManualUntil(state, now, now.AddMinutes(minutes), schedule, nightPhase, false,
-            minutes >= schedule.Breaks.NaturalRestMinutes);
+        StartManualUntil(state, now, now.AddMinutes(minutes), schedule, nightPhase, false, true);
     }
 
     public static DateTimeOffset TomorrowRelease(Schedule schedule, DateTimeOffset now, int? hour = null)
@@ -206,6 +205,7 @@ public static class BreakPlanner
         if (nightPhase == Phase.Restricted) throw new InvalidOperationException("正在执行早睡限制，无需另开休息。");
         if (state.Frozen is { } frozen && now < frozen.ReleaseAt)
             throw new InvalidOperationException("本轮休息已经承诺或正在执行，不能替换；结束后可开始新的休息。");
+        state.WorkSeconds = 0;
         state.RestStartedAt = null;
         state.Frozen = new(now, now, end, schedule.DisableTaskManager, schedule.Behavior,
             true, tomorrow, resetsWork);

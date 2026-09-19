@@ -165,7 +165,8 @@ internal sealed class TrayController : IDisposable
                 noticeKey = key;
                 tray.ShowBalloonTip(15000, status.IsBreak ? "该准备休息了" : "该准备睡觉了", $"{bedtime.ToLocalTime():HH:mm} 开始休息，请保存工作。", Forms.ToolTipIcon.Info);
                 CloseReminders();
-                var window = new ReminderWindow(bedtime, status.IsBreak, status.IsBreak ? StartCycleRestNow : null);
+                Func<Task>? startNow = status.IsBreak ? StartCycleRestNow : null;
+                var window = new ReminderWindow(bedtime, status.IsBreak, startNow);
                 reminders.Add(window); window.Show();
             }
         }

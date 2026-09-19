@@ -48,16 +48,21 @@ internal sealed class ReminderWindow : Window
             var remaining = bedtime - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
             {
-                countdown.Text = isBreak ? "休息时间" : "晚安";
+                countdown.Text = CountdownText(remaining, isBreak);
                 Close();
                 return;
             }
-            countdown.Text = isBreak && remaining <= TimeSpan.FromMinutes(1)
-                ? $"还有 {Math.Max(1, Math.Ceiling(remaining.TotalSeconds))} 秒"
-                : $"还有 {Math.Ceiling(remaining.TotalMinutes)} 分钟";
+            countdown.Text = CountdownText(remaining, isBreak);
         }
         timer.Tick += (_, _) => Update();
         Closed += (_, _) => timer.Stop();
         Loaded += (_, _) => { Update(); timer.Start(); };
     }
+
+    internal static string CountdownText(TimeSpan remaining, bool isBreak) =>
+        remaining <= TimeSpan.Zero
+            ? isBreak ? "休息时间" : "晚安"
+            : isBreak && remaining <= TimeSpan.FromMinutes(1)
+                ? $"还有 {Math.Max(1, Math.Ceiling(remaining.TotalSeconds))} 秒"
+                : $"还有 {Math.Ceiling(remaining.TotalMinutes)} 分钟";
 }
