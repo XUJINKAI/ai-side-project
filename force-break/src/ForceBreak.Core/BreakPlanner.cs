@@ -11,7 +11,7 @@ public sealed record BreakOptions
     public int NaturalRestMinutes { get; init; } = 10;
     public bool IdleCountsAsRest { get; init; } = true;
     public bool MergeWithBedtime { get; init; } = true;
-    public int MinimumPostBreakMinutes { get; init; } = 10;
+    public int MinimumPostBreakMinutes { get; init; } = 50;
 
     public void Validate()
     {

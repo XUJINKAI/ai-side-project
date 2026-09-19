@@ -2,7 +2,6 @@ using ForceBreak.Core;
 using ForceBreak.Windows;
 using System.IO.Pipes;
 using System.Security.AccessControl;
-using System.Security.Cryptography;
 using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text.Json;
@@ -116,7 +115,7 @@ public sealed class GuardService : ServiceBase
         int? tomorrowHour = null, bool startCycleNow = false)
     {
         var candidate = JsonStorage.Clone(state);
-        var planner = new Planner(candidate, () => RandomNumberGenerator.GetInt32(1_000_000));
+        var planner = new Planner(candidate);
         var now = DateTimeOffset.UtcNow;
         var stamp = Stopwatch.GetTimestamp();
         var elapsed = lastTick == 0 ? TimeSpan.Zero : Stopwatch.GetElapsedTime(lastTick, stamp);

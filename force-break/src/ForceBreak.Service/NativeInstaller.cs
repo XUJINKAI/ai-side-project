@@ -245,7 +245,7 @@ public static class NativeInstaller
             var state = JsonStorage.Read<PlannerState>(Paths.State);
             state.Validate();
             var now = DateTimeOffset.UtcNow;
-            var planner = new Planner(state, () => System.Security.Cryptography.RandomNumberGenerator.GetInt32(1_000_000));
+            var planner = new Planner(state);
             var night = planner.Tick(now);
             var rest = BreakPlanner.Tick(state.Break, state.Schedule.Breaks, now, TimeSpan.Zero,
                 night.Phase == Phase.Restricted, state.Schedule.DisableTaskManager);

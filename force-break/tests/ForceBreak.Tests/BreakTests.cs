@@ -173,7 +173,7 @@ internal static class BreakTests
         {
             var state = new BreakState();
             var result = BreakPlanner.Tick(state, Options, Start.AddMinutes(50), TimeSpan.FromMinutes(50),
-                WorkObservation.Active, false, false, guaranteedNightLockAt: Start.AddMinutes(90));
+                WorkObservation.Active, false, false, guaranteedNightLockAt: Start.AddMinutes(121));
             Equal<DateTimeOffset?>(null, result.CoveredByNightAt); Equal(Phase.Reminder, result.Phase);
         }),
         ("fresh activity hook cannot fabricate a long natural rest", () =>

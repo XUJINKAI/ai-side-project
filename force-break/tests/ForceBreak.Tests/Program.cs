@@ -5,31 +5,25 @@ var tests = new (string Name, Action Run)[]
     ("default schedule and disabled startup", () =>
     {
         var s = new Schedule(); s.Validate();
-        Equal(new TimeOnly(20, 0), s.Commitment); Equal(30, s.JitterMinutes);
+        Equal(new TimeOnly(20, 0), s.Commitment);
         Equal(Phase.Disabled, New(s).Tick(At(10, 23, 30)).Phase);
     }),
     ("commitment precedes first reminder, inclusive lower boundary", () =>
     {
-        var p = New(Enabled(), 0);
-        Equal(Phase.Open, p.Tick(At(10, 19, 29, 59)).Phase);
-        Equal(Phase.Committed, p.Tick(At(10, 19, 30)).Phase);
+        var p = New(Enabled());
+        Equal(Phase.Open, p.Tick(At(10, 19, 59, 59)).Phase);
+        Equal(Phase.Committed, p.Tick(At(10, 20, 0)).Phase);
         Equal(Phase.Committed, p.Tick(At(10, 21, 59, 59)).Phase);
         Equal(Phase.Reminder, p.Tick(At(10, 22, 0)).Phase);
         Equal(Phase.Restricted, p.Tick(At(10, 23, 0)).Phase);
         Equal(Phase.Restricted, p.Tick(At(11, 5, 59, 59)).Phase);
         Equal(Phase.Open, p.Tick(At(11, 6, 0)).Phase);
     }),
-    ("inclusive upper jitter boundary", () =>
-    {
-        var p = New(Enabled(), 999999);
-        Equal(Phase.Open, p.Tick(At(10, 20, 29, 59)).Phase);
-        Equal(Phase.Committed, p.Tick(At(10, 20, 30)).Phase);
-    }),
     ("frozen night survives disable, time, day, policy and timezone edits", () =>
     {
         var p = New(Enabled() with { DisableTaskManager = true });
         p.Tick(At(10, 21, 0)); var frozen = p.State.Frozen;
-        var changed = Enabled() with { Enabled = false, Commitment = new(21, 0), JitterMinutes = 0,
+        var changed = Enabled() with { Enabled = false, Commitment = new(21, 0),
             Bedtime = new(23, 30), Release = new(7, 0), Days = [DayOfWeek.Monday], DisableTaskManager = false };
         Equal(Phase.Committed, p.Update(changed, At(10, 21, 1)).Phase);
         Equal(frozen, p.State.Frozen); Equal(true, p.Tick(At(10, 23, 1)).TaskManagerRequested);
@@ -37,25 +31,25 @@ var tests = new (string Name, Action Run)[]
     }),
     ("save at exact deadline freezes old rules first", () =>
     {
-        var p = New(Enabled(), 0);
+        var p = New(Enabled());
         p.Tick(At(10, 12, 0));
-        Equal(Phase.Committed, p.Update(Enabled() with { Enabled = false }, At(10, 19, 30)).Phase);
+        Equal(Phase.Committed, p.Update(Enabled() with { Enabled = false }, At(10, 20, 0)).Phase);
     }),
-    ("restart before and after commitment cannot redraw", () =>
+    ("restart preserves the fixed commitment and frozen night", () =>
     {
-        var p = New(Enabled(), 12345); p.Tick(At(10, 12, 0));
-        var sample = p.State.Draws[new(2026, 9, 10)];
-        var restarted = new Planner(JsonStorage.Clone(p.State), () => throw new Exception("Unexpected redraw"));
+        var p = New(Enabled()); p.Tick(At(10, 12, 0));
+        var restarted = new Planner(JsonStorage.Clone(p.State));
         restarted.Tick(At(10, 20, 45));
-        Equal(sample, restarted.State.Draws[new(2026, 9, 10)]);
-        var again = new Planner(JsonStorage.Clone(restarted.State), () => throw new Exception("Unexpected redraw"));
+        Equal(new DateTimeOffset(2026, 9, 10, 20, 0, 0, TimeSpan.Zero), restarted.State.Frozen!.CommitAt);
+        var again = new Planner(JsonStorage.Clone(restarted.State));
         Equal(Phase.Restricted, again.Tick(At(11, 1, 0)).Phase);
     }),
-    ("same day edits keep original random sample", () =>
+    ("editing a future fixed commitment applies immediately", () =>
     {
-        var p = New(Enabled(), 81234); p.Tick(At(10, 10, 0));
-        p.Update(Enabled() with { JitterMinutes = 15 }, At(10, 11, 0));
-        Equal(81234, p.State.Draws[new(2026, 9, 10)]);
+        var p = New(Enabled()); p.Tick(At(10, 10, 0));
+        p.Update(Enabled() with { Commitment = new(21, 0) }, At(10, 11, 0));
+        Equal(Phase.Open, p.Tick(At(10, 20, 59, 59)).Phase);
+        Equal(Phase.Committed, p.Tick(At(10, 21, 0)).Phase);
     }),
     ("wake or login during restriction catches yesterday's night", () =>
     {
@@ -83,7 +77,7 @@ var tests = new (string Name, Action Run)[]
     }),
     ("range validation rejects crossing reminder or previous date", () =>
     {
-        Throws(() => (Enabled() with { Commitment = new(21, 45), JitterMinutes = 30 }).Validate());
+        Throws(() => (Enabled() with { Commitment = new(22, 0) }).Validate());
         Throws(() => (Enabled() with { Commitment = new(0, 15) }).Validate());
         Throws(() => (Enabled() with { Release = new(20, 0) }).Validate());
         Throws(() => (Enabled() with { Reminder = new(23, 0) }).Validate());
@@ -102,11 +96,19 @@ var tests = new (string Name, Action Run)[]
         var result = p.Tick(new DateTimeOffset(2026, 11, 1, 4, 0, 0, TimeSpan.Zero));
         Equal(new DateTimeOffset(2026, 11, 1, 6, 30, 0, TimeSpan.Zero), result.ReleaseAt!.Value.ToUniversalTime());
     }),
-    ("status excludes commitment timestamp and draws", () =>
+    ("status excludes the internal commitment timestamp", () =>
     {
         var p = New(Enabled());
         var json = System.Text.Json.JsonSerializer.Serialize(p.Tick(At(10, 21, 0)));
-        if (json.Contains("CommitAt") || json.Contains("Draws")) throw new Exception("Random commitment leaked");
+        if (json.Contains("CommitAt")) throw new Exception("Commitment timestamp leaked");
+    }),
+    ("removed v1 random fields are ignored without migration", () =>
+    {
+        var json = """{"Version":1,"Schedule":{"JitterMinutes":30},"Draws":{},"Break":{}}""";
+        var state = System.Text.Json.JsonSerializer.Deserialize<PlannerState>(json, JsonStorage.Options)!;
+        state.Validate();
+        Equal(new TimeOnly(20, 0), state.Schedule.Commitment);
+        Equal(50, state.Schedule.Breaks.MinimumPostBreakMinutes);
     }),
     ("state roundtrip and atomic replacement", () =>
     {
@@ -136,7 +138,7 @@ Console.WriteLine($"{tests.Length - failed}/{tests.Length} passed");
 return failed == 0 ? 0 : 1;
 
 static Schedule Enabled() => new() { Enabled = true, TimeZoneId = "UTC", Reminder = new(22, 0), Bedtime = new(23, 0), DisableTaskManager = false };
-static Planner New(Schedule schedule, int sample = 500000) => new(new PlannerState { Schedule = schedule }, () => sample);
+static Planner New(Schedule schedule) => new(new PlannerState { Schedule = schedule });
 static DateTimeOffset At(int day, int hour, int minute, int second = 0) => new(2026, 9, day, hour, minute, second, TimeSpan.Zero);
 static void Equal<T>(T expected, T actual)
 {

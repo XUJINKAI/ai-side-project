@@ -8,9 +8,10 @@ internal static class ForceBreakTests
         ("Force Break fresh defaults", () =>
         {
             var s = new Schedule(); s.Validate();
-            Check(s.Commitment == new TimeOnly(20, 0) && s.JitterMinutes == 30 && s.Reminder == new TimeOnly(21, 30)
+            Check(s.Commitment == new TimeOnly(20, 0) && s.Reminder == new TimeOnly(21, 30)
                 && s.Bedtime == new TimeOnly(22, 30) && s.Release == new TimeOnly(6, 0));
             Check(s.Breaks.WorkMinutes == 50 && s.Breaks.RestMinutes == 10 && s.Breaks.ReminderMinutes == 10 && s.Breaks.CommitmentMinutes == 10);
+            Check(s.Breaks.MinimumPostBreakMinutes == 50);
             Check(s.DisableTaskManager && s.Behavior.DetectActivity && s.Behavior.FullscreenOverlay && !s.Behavior.LockScreen);
         }),
         ("50 work plus 10 rest resets at minute 60", () =>
@@ -39,7 +40,7 @@ internal static class ForceBreakTests
         ("behavior settings cannot change a frozen night or break", () =>
         {
             var state = new PlannerState { Schedule = new() { Enabled = true, TimeZoneId = "UTC" } };
-            var planner = new Planner(state, () => 0); var at = Now.AddHours(8);
+            var planner = new Planner(state); var at = Now.AddHours(8);
             planner.Tick(at);
             var changed = state.Schedule with { Behavior = new() { FullscreenOverlay = false, LockScreen = true } };
             var result = planner.Update(changed, at.AddMinutes(1));
@@ -75,7 +76,7 @@ internal static class ForceBreakTests
         ("manual rest and committed night retain both protection deadlines", () =>
         {
             var state = new PlannerState { Schedule = new() { Enabled = true, TimeZoneId = "UTC" } };
-            var now = Now.AddHours(8); var night = new Planner(state, () => 0).Tick(now);
+            var now = Now.AddHours(8); var night = new Planner(state).Tick(now);
             BreakPlanner.StartManual(state.Break, now, 5, state.Schedule, night.Phase);
             var rest = BreakPlanner.Tick(state.Break, state.Schedule.Breaks, now, TimeSpan.Zero, false, true);
             var combined = BreakPlanner.Combine(night, rest);
